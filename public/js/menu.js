@@ -68,7 +68,12 @@ function validKey(key) {
 }
 function cartItems() {
   const out = [];
-  state.plates.forEach((plate, i) => {
+  let num = 0;
+  state.plates.forEach((plate) => {
+    // Los platos vacíos no cuentan: se numeran seguidos (Plato 1, 2, 3…)
+    const hasItems = Object.entries(plate).some(([k, q]) => q > 0 && validKey(k));
+    if (hasItems) num++;
+    const i = num - 1;
     for (const [key, qty] of Object.entries(plate)) {
       const v = validKey(key);
       if (!v || qty <= 0) continue;
@@ -437,10 +442,11 @@ document.addEventListener("click", (ev) => {
   if (d.dec) { plate[d.dec] = (plate[d.dec] || 0) - 1; if (plate[d.dec] <= 0) delete plate[d.dec]; render(); return; }
   if (d.plate) { state.cur = Number(d.plate); render(); return; }
   if ("addplate" in d) {
-    // Si el último plato está vacío, solo cambiamos a él
-    const lastEmpty = !Object.keys(state.plates[state.plates.length - 1]).length;
-    if (!lastEmpty) state.plates.push({});
-    state.cur = state.plates.length - 1; render(); return;
+    if (state.plates.length >= 20) { toast("Máximo 20 platos por ronda"); return; }
+    state.plates.push({});
+    state.cur = state.plates.length - 1;
+    toast(`Plato ${state.cur + 1}: agrega lo que va en este plato`);
+    render(); return;
   }
   if (t.id === "placeOrder" && MODE !== "casa") { placeOrder(); return; }
   if ("checkout" in d) { state.checkout = true; window.scrollTo({ top: 0 }); render(); return; }
