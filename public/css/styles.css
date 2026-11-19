@@ -175,3 +175,4 @@ input[type="checkbox"] { width: auto }
 .summary tfoot td { border-top: 1px solid var(--line); padding-top: 8px; font-weight: 700 }
 .order .summary { background: var(--bg) }
 .prow.voided { opacity: .6 } .prow.voided .price { text-decoration: line-through }
+.tag.plat { background: var(--ink); color: var(--bg) }

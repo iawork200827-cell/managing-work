@@ -7,7 +7,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import {
   db, configured, $, esc, money, toMillis, local, toast, notConfiguredHtml,
-  STATUS_LABEL, DEFAULT_CONFIG, prepMinutes, estimate, isClosed, newId, showErrorsOnPage, summaryHtml
+  STATUS_LABEL, DEFAULT_CONFIG, prepMinutes, estimate, isClosed, newId, showErrorsOnPage, summaryHtml, tableLabel, tableIds, BAR_ID
 } from "./common.js";
 
 const showError = showErrorsOnPage();
@@ -210,7 +210,7 @@ function tableHeader() {
 // Este celular todavía no está en una cuenta: unirse a una con código o abrir una nueva
 function chooseTab() {
   return `<div class="ticket">
-    <form class="full" id="joinForm"><h2>Pedir en la Mesa ${esc(state.table)}</h2>
+    <form class="full" id="joinForm"><h2>Pedir en la ${esc(tableLabel(state.table))}</h2>
       <p class="muted" style="margin:4px 0 8px">¿Alguien de tu mesa ya abrió una cuenta? Escribe su <strong>código de mesa</strong> para pedir en la misma cuenta.</p>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <input id="joinCode" maxlength="6" autocomplete="off" autocapitalize="characters" placeholder="Ej. K7P2QX" style="flex:1 1 140px;width:auto;text-transform:uppercase;font-family:var(--mono)" value="${esc(state.joinCode)}">
@@ -269,7 +269,7 @@ async function sendInvoice(ref, kind, total, code) {
 function tabTicket(t) {
   const rounds = state.rounds.filter((r) => r.status !== "cancelado").sort((a, b) => a.createdAt - b.createdAt);
   const total = rounds.reduce((s, r) => s + (Number(r.total) || 0), 0);
-  let html = `<div class="ticket"><div><div class="label">Mesa ${esc(state.table)} · tu cuenta</div><div class="big">${money(total, cur())}</div>
+  let html = `<div class="ticket"><div><div class="label">${esc(tableLabel(state.table))} · tu cuenta</div><div class="big">${money(total, cur())}</div>
     <div class="muted">${rounds.length} ${rounds.length === 1 ? "ronda" : "rondas"}</div></div>
     <div><div class="label">Código de la cuenta</div><div class="big">${esc(t.code)}</div>
     <div class="muted">Compártelo con quien vaya a pedir en esta misma cuenta.</div></div>`;
@@ -344,7 +344,7 @@ function renderInner() {
   const name = state.config.name || "Menú";
   $("shopName").textContent = name;
   document.title = name + ({ mesa: " · Mesa", llevar: " · Para llevar", casa: " · Pedir desde casa" })[MODE];
-  $("eyebrow").textContent = MODE === "mesa" ? (state.table ? `Mesa ${state.table} · ordena desde tu celular` : "Pedido en mesa")
+  $("eyebrow").textContent = MODE === "mesa" ? (state.table ? `${tableLabel(state.table)} · ordena desde tu celular` : "Pedido en mesa")
     : MODE === "casa" ? (deliveryOn() ? "Pide desde casa · domicilio gratis o recoger" : "Pide desde casa · pasa a recoger") : "Pedido para llevar";
   const app = $("app");
   if (!configured) { app.innerHTML = notConfiguredHtml(); return; }

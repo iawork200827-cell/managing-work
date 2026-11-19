@@ -127,3 +127,19 @@ export function summaryHtml(itemLists, currency = "$", title = "Resumen de lo qu
     <table><tbody>${rows.map((r) => `<tr><td class="mono q">${r.qty} ×</td><td>${esc(r.name)}</td><td class="mono r">${money(r.qty * r.price, currency)}</td></tr>`).join("")}</tbody>
     <tfoot><tr><td class="mono q">${pieces}</td><td>${pieces === 1 ? "pieza" : "piezas"} en total</td><td class="mono r">${money(total, currency)}</td></tr></tfoot></table></div>`;
 }
+
+// Nombre de una mesa para mostrar: "Mesa 3" o "Barra"
+export const BAR_ID = "barra";
+export function tableLabel(id) {
+  return String(id) === BAR_ID ? "Barra" : "Mesa " + id;
+}
+// Mesas del negocio (1..N) más la barra
+export function tableIds(config) {
+  const n = Math.min(200, Math.max(0, Number(config && config.tables) || 0));
+  const ids = Array.from({ length: n }, (_, i) => String(i + 1));
+  if (!config || config.bar !== false) ids.push(BAR_ID);
+  return ids;
+}
+
+// Plataformas de reparto
+export const PLATFORMS = { uber: "Uber Eats", didi: "DiDi Food" };

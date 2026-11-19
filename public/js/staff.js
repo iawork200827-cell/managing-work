@@ -7,8 +7,8 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { signInAnonymously, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
-  db, auth, configured, $, esc, money, toMillis, local, toast, notConfiguredHtml,
-  STATUS_LABEL, DEFAULT_CONFIG, prepMinutes, newId, showErrorsOnPage, summaryHtml, isClosed
+  db, auth, configured, OWNER_EMAILS, $, esc, money, toMillis, local, toast, notConfiguredHtml,
+  STATUS_LABEL, DEFAULT_CONFIG, prepMinutes, newId, showErrorsOnPage, summaryHtml, isClosed, tableLabel, tableIds, BAR_ID, PLATFORMS
 } from "./common.js";
 
 showErrorsOnPage();
@@ -29,7 +29,7 @@ const state = {
   view: "mesas", config: { ...DEFAULT_CONFIG }, products: [],
   tabs: {}, rounds: {}, active: [],
   // Pedido que se está capturando
-  target: null, plates: [{}], cur: 0, pick: {}, note: "", customer: "", phone: "", sending: false,
+  target: null, plates: [{}], cur: 0, pick: {}, note: "", customer: "", phone: "", extRef: "", sending: false,
   openFor: null, openName: "", unsubs: []
 };
 const cur = () => state.config.currency || "$";
@@ -77,13 +77,14 @@ function renderInner() {
   if (state.checking) { app.innerHTML = '<p class="muted">Entrando…</p>'; return; }
   if (!state.ok) { app.innerHTML = loginHtml(); $("who").hidden = true; return; }
   $("who").hidden = false;
-  $("whoName").textContent = state.name;
+  $("whoName").textContent = state.name + (state.isManager ? " (encargado)" : "");
+  $("panelLink").hidden = !(state.isManager || state.name === "Dueño");
   if (state.target) { app.innerHTML = builderHtml(); renderBar(); return; }
   $("cartbar").hidden = true;
   const pend = state.active.filter((o) => o.status === "pendiente" || o.status === "por_pagar").length;
   let html = `<div class="tabs">
     <button data-view="mesas" class="${state.view === "mesas" ? "on" : ""}">Mesas</button>
-    <button data-view="llevar" class="${state.view === "llevar" ? "on" : ""}">Para llevar / teléfono</button>
+    <button data-view="llevar" class="${state.view === "llevar" ? "on" : ""}">Para llevar · Uber · DiDi</button>
     <button data-view="cocina" class="${state.view === "cocina" ? "on" : ""}">Cocina${pend ? ` (${pend})` : ""}</button></div>`;
   if (isClosed(state.config)) html += `<div class="notice">Los pedidos están cerrados por hoy.</div>`;
   if (state.view === "mesas") html += tablesHtml();
@@ -108,12 +109,10 @@ const tabRounds = (id) => (state.rounds[id] || []).filter((r) => r.status !== "c
 const tabTotal = (id) => tabRounds(id).reduce((s, r) => s + (Number(r.total) || 0), 0);
 
 function tablesHtml() {
-  const n = Math.max(1, Number(state.config.tables) || 1);
   let html = '<div class="board">';
-  for (let i = 1; i <= n; i++) {
-    const t = String(i);
+  for (const t of tableIds(state.config)) {
     const tabs = Object.values(state.tabs).filter((x) => x.table === t).sort((a, b) => toMillis(a.openedAt) - toMillis(b.openedAt));
-    html += `<div class="col"><div class="col-head"><h3>Mesa ${t}</h3><span class="muted">${tabs.length ? tabs.length + (tabs.length === 1 ? " cuenta" : " cuentas") : "libre"}</span></div>`;
+    html += `<div class="col"><div class="col-head"><h3>${tableLabel(t)}</h3><span class="muted">${tabs.length ? tabs.length + (tabs.length === 1 ? " cuenta" : " cuentas") : "libre"}</span></div>`;
     for (const tab of tabs) {
       const rounds = tabRounds(tab.id);
       html += `<div class="order"><div class="row"><strong>${esc(tab.name || "Cuenta")}</strong><span class="mono muted">${esc(tab.code)}</span>${tab.billRequested ? '<span class="tag bill">Pidió la cuenta</span>' : ""}</div>
@@ -125,18 +124,19 @@ function tablesHtml() {
       html += `<form class="order" id="openForm"><label class="label" for="openName">Nombre del cliente (opcional)</label>
         <input id="openName" maxlength="40" value="${esc(state.openName)}" placeholder="Ej. Familia López">
         <div class="acts"><button class="primary" type="submit">Abrir cuenta</button><button type="button" data-cancelopen>Cancelar</button></div></form>`;
-    } else html += `<button data-open="${t}">+ Abrir cuenta en Mesa ${t}</button>`;
+    } else html += `<button data-open="${t}">+ Abrir cuenta en ${tableLabel(t)}</button>`;
     html += "</div>";
   }
   return html + "</div>";
 }
 
 function takeoutHtml() {
-  const mine = state.active.filter((o) => o.type === "llevar").sort((a, b) => a.createdAt - b.createdAt);
-  let html = `<div class="acts" style="margin-bottom:12px"><button class="primary" data-newtakeout>+ Nuevo pedido para llevar / teléfono</button></div>`;
-  if (!mine.length) return html + '<div class="empty">No hay pedidos para llevar en curso.</div>';
+  const mine = state.active.filter((o) => o.type === "llevar" || o.type === "plataforma").sort((a, b) => a.createdAt - b.createdAt);
+  let html = `<div class="acts" style="margin-bottom:12px"><button class="primary" data-newtakeout>+ Para llevar / teléfono</button>
+    <button data-newplatform="uber">+ Uber Eats</button><button data-newplatform="didi">+ DiDi Food</button></div>`;
+  if (!mine.length) return html + '<div class="empty">No hay pedidos para llevar ni de plataformas en curso.</div>';
   html += '<div class="plist">';
-  for (const o of mine) html += `<div class="prow"><div><strong>${esc(o.customer)}</strong> <span class="mono muted">#${esc(o.code)}</span>${o.phone ? ` · <span class="mono">${esc(o.phone)}</span>` : ""}
+  for (const o of mine) html += `<div class="prow"><div>${o.type === "plataforma" ? `<span class="tag plat">${esc(PLATFORMS[o.platform])} #${esc(o.extRef)}</span> ` : ""}<strong>${esc(o.customer || "")}</strong> <span class="mono muted">#${esc(o.code)}</span>${o.phone ? ` · <span class="mono">${esc(o.phone)}</span>` : ""}
       <div class="muted" style="font-size:.82rem">${STATUS_LABEL[o.status]} · hace ${Math.max(0, Math.round((Date.now() - o.createdAt) / 60000))} min</div></div>
       <div class="price">${money(o.total, cur())}</div></div>`;
   return html + "</div>";
@@ -155,9 +155,9 @@ function kitchenHtml() {
   const NEXT = {
     pendiente: () => ["preparando", "Empezar a preparar"],
     preparando: () => ["listo", "Marcar listo"],
-    listo: (o) => ["entregado", o.type === "mesa" ? "Servido en mesa" : o.type === "casa" ? "Entregado" : "Entregado y cobrado"]
+    listo: (o) => ["entregado", o.type === "mesa" ? "Servido en mesa" : o.type === "plataforma" ? "Entregado al repartidor" : o.type === "casa" ? "Entregado" : "Entregado y cobrado"]
   };
-  const who = (o) => o.type === "mesa" ? `<span class="tag">Mesa ${esc(o.table)}</span>` : o.type === "casa" ? `<span class="tag casa">${o.delivery === "domicilio" ? "Domicilio" : "Casa · recoge"}</span> <strong>${esc(o.customer)}</strong>` : `<span class="tag">Para llevar</span> <strong>${esc(o.customer)}</strong>`;
+  const who = (o) => o.type === "plataforma" ? `<span class="tag plat">${esc(PLATFORMS[o.platform])} #${esc(o.extRef)}</span> <strong>${esc(o.customer || "")}</strong>` : o.type === "mesa" ? `<span class="tag">${esc(tableLabel(o.table))}</span>` : o.type === "casa" ? `<span class="tag casa">${o.delivery === "domicilio" ? "Domicilio" : "Casa · recoge"}</span> <strong>${esc(o.customer)}</strong>` : `<span class="tag">Para llevar</span> <strong>${esc(o.customer)}</strong>`;
   let html = "";
   const unpaid = state.active.filter((o) => o.status === "por_pagar");
   if (unpaid.length) {
@@ -188,8 +188,12 @@ function kitchenHtml() {
 
 function builderHtml() {
   const t = state.target;
-  const title = t.type === "mesa" ? `Pedido para Mesa ${esc(t.table)} · ${esc(t.name || "cuenta " + t.code)}` : "Pedido para llevar / teléfono";
+  const title = t.type === "mesa" ? `Pedido para ${esc(tableLabel(t.table))} · ${esc(t.name || "cuenta " + t.code)}`
+    : t.type === "plataforma" ? `Pedido de ${esc(PLATFORMS[t.platform])}` : "Pedido para llevar / teléfono";
   let html = `<button data-back>← Volver</button><h2 style="margin:12px 0 8px">${title}</h2>`;
+  if (t.type === "plataforma") html += `<div class="form"><label>Número de pedido en ${esc(PLATFORMS[t.platform])}<input id="extRef" maxlength="30" autocomplete="off" value="${esc(state.extRef)}"></label>
+    <label>Nombre del cliente (opcional)<input id="custName" maxlength="60" value="${esc(state.customer)}"></label></div>
+    <p class="muted" style="margin:0 0 8px">Captura los productos tal como vienen en la app. Ya están pagados por la plataforma.</p>`;
   if (t.type === "llevar") html += `<div class="form"><label>Nombre del cliente<input id="custName" maxlength="60" value="${esc(state.customer)}"></label>
     <label>Teléfono (opcional)<input id="custPhone" type="tel" maxlength="20" value="${esc(state.phone)}"></label></div>`;
   html += `<div class="plates">${state.plates.map((p, i) => { const n = Object.values(p).reduce((a, b) => a + b, 0); return `<button data-plate="${i}" class="${i === state.cur ? "on" : ""}">Plato ${i + 1}${n ? ` · ${n}` : ""}</button>`; }).join("")}<button data-addplate>+ Otro plato</button></div>`;
@@ -239,12 +243,12 @@ async function openTab(table, name) {
   if (name) tab.name = name.slice(0, 40);
   b.set(doc(db, "tabs", session), tab);
   b.set(doc(db, "joins", table + "-" + code), { session, table, createdAt: serverTimestamp() });
-  const ok = await write(() => b.commit(), `Cuenta abierta en Mesa ${table} · código ${code}`);
+  const ok = await write(() => b.commit(), `Cuenta abierta en ${tableLabel(table)} · código ${code}`);
   if (ok) { state.openFor = null; state.openName = ""; startOrder({ type: "mesa", table, session, code, name }); }
 }
 
 function startOrder(target) {
-  state.target = target; state.plates = [{}]; state.cur = 0; state.note = ""; state.customer = ""; state.phone = "";
+  state.target = target; state.plates = [{}]; state.cur = 0; state.note = ""; state.customer = ""; state.phone = ""; state.extRef = "";
   window.scrollTo({ top: 0 }); render();
 }
 
@@ -252,6 +256,7 @@ async function sendOrder() {
   const t = state.target; const items = cartItems();
   if (!items.length) return;
   if (t.type === "llevar" && !state.customer.trim()) { toast("Escribe el nombre del cliente"); $("custName")?.focus(); return; }
+  if (t.type === "plataforma" && !state.extRef.trim()) { toast("Escribe el número de pedido de la app"); $("extRef")?.focus(); return; }
   state.sending = true; renderBar();
   const ref = doc(collection(db, "orders"));
   const units = items.reduce((s, i) => s + i.qty, 0);
@@ -267,6 +272,7 @@ async function sendOrder() {
   if (state.note.trim()) order.note = state.note.trim().slice(0, 200);
   if (t.type === "llevar") { order.customer = state.customer.trim().slice(0, 60); if (state.phone.trim()) order.phone = state.phone.trim().slice(0, 20); }
   if (t.type === "mesa") { order.table = t.table; order.session = t.session; }
+  if (t.type === "plataforma") { order.platform = t.platform; order.extRef = state.extRef.trim().slice(0, 30); if (state.customer.trim()) order.customer = state.customer.trim().slice(0, 60); }
   const b = writeBatch(db);
   b.set(ref, order);
   b.set(doc(db, "queue", ref.id), { status: "pendiente", createdAt: serverTimestamp(), minutes });
@@ -287,6 +293,7 @@ function setStatus(o, status) {
     const patch = { status, handledBy: state.name.slice(0, 40) };
     if (status !== "cancelado") patch[status + "At"] = serverTimestamp(); else patch.cancelledBy = state.name.slice(0, 40);
     if (status === "entregado" && o.type === "llevar") { patch.paid = true; patch.payMethod = "efectivo"; }
+    if (status === "entregado" && o.type === "plataforma") { patch.paid = true; patch.payMethod = o.platform; }
     b.update(doc(db, "orders", o.id), patch);
     if (o.type === "mesa" && o.session) b.set(doc(db, "tabs", o.session, "rounds", o.id), { status }, { merge: true });
     if (status === "entregado" || status === "cancelado") b.delete(doc(db, "queue", o.id));
@@ -312,7 +319,7 @@ function closeTab(tabId, method) {
       b.update(doc(db, "orders", r.id), patch);
     }
     await b.commit();
-  }, `Mesa ${tab.table} cobrada (${money(total, cur())})`);
+  }, `${tableLabel(tab.table)} cobrada (${money(total, cur())})`);
 }
 
 // ---------- eventos ----------
@@ -325,6 +332,7 @@ document.addEventListener("click", (ev) => {
   if ("cancelopen" in d) { state.openFor = null; render(); return; }
   if (d.addto) { const tab = state.tabs[d.addto]; startOrder({ type: "mesa", table: tab.table, session: tab.id, code: tab.code, name: tab.name }); return; }
   if ("newtakeout" in d) { startOrder({ type: "llevar" }); return; }
+  if (d.newplatform) { startOrder({ type: "plataforma", platform: d.newplatform }); return; }
   if ("back" in d) { state.target = null; render(); return; }
   if (d.pick) { state.pick[d.pick] = d.opt; render(); return; }
   if (d.inc) { plate[d.inc] = (plate[d.inc] || 0) + 1; render(); return; }
@@ -361,6 +369,7 @@ document.addEventListener("input", (ev) => {
   if (id === "custNote") state.note = ev.target.value;
   if (id === "custName") state.customer = ev.target.value;
   if (id === "custPhone") state.phone = ev.target.value;
+  if (id === "extRef") state.extRef = ev.target.value;
   if (id === "openName") state.openName = ev.target.value;
 });
 document.addEventListener("submit", async (ev) => {
@@ -369,8 +378,17 @@ document.addEventListener("submit", async (ev) => {
   if (ev.target.id === "loginForm") {
     const name = $("staffName").value.trim(), pin = $("staffPin").value.trim();
     if (!name || !pin) return;
+    const ref = doc(db, "staffSessions", state.user.uid);
     try {
-      await setDoc(doc(db, "staffSessions", state.user.uid), { pin, key: state.key, name, createdAt: serverTimestamp() });
+      // Primero como mesero; si no es el PIN de meseros, se prueba como encargado
+      try { await setDoc(ref, { pin, key: state.key, name, role: "mesero", createdAt: serverTimestamp() }); }
+      catch (e1) {
+        await setDoc(ref, { pin, key: state.key, name, role: "encargado", createdAt: serverTimestamp() });
+        local.set("comanda.staffName", name);
+        toast("Bienvenido, encargado " + name);
+        location.href = "/panel";
+        return;
+      }
       state.name = name; local.set("comanda.staffName", name);
       toast("Bienvenido, " + name);
       startListening();
@@ -414,8 +432,12 @@ if (configured) {
   onAuthStateChanged(auth, async (u) => {
     if (!u) { try { await signInAnonymously(auth); } catch (e) { console.error(e); notice("No se pudo iniciar el modo empleado. Avísale al dueño."); state.checking = false; render(); } return; }
     state.user = u;
+    // El dueño (con su correo) entra directo a tomar pedidos
+    if (!u.isAnonymous && OWNER_EMAILS.map((e) => e.toLowerCase()).includes(String(u.email || "").toLowerCase())) {
+      state.name = "Dueño"; startListening(); return;
+    }
     const sess = await getDoc(doc(db, "staffSessions", u.uid)).catch(() => null);
-    if (sess && sess.exists()) { state.name = sess.data().name || state.name; startListening(); }
+    if (sess && sess.exists()) { state.name = sess.data().name || state.name; state.isManager = sess.data().role === "encargado"; startListening(); }
     else { state.checking = false; render(); }
   });
   setInterval(() => { if (state.ok && state.view === "cocina" && !state.target) render(); }, 30000);

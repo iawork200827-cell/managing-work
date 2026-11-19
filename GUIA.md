@@ -6,6 +6,9 @@ App para tu negocio con cinco versiones:
 - **Para llevar** (`/llevar`, en el local): pedido con nombre; el cliente ve **cuántos pedidos tiene delante** y el **tiempo estimado**. Se paga al recoger.
 - **Pedir desde casa** (`/casa`): domicilio gratis (se puede apagar) o recoger. **Se paga antes por transferencia**: el pedido no entra a cocina hasta que el dueño confirma el pago en el panel. Los datos bancarios se ponen en Panel → Ajustes.
 - **Empleados** (`/empleados`, QR de empleados + PIN): toman pedidos de mesa (abren cuentas o agregan a las abiertas), para llevar o por teléfono, cobran y cierran cuentas, confirman pagos desde casa y ven la cocina. No ven las ventas. El PIN se pone en Panel → Ajustes; al cambiarlo, todos los empleados tienen que volver a entrar.
+- **Encargado** (QR de empleados + PIN de encargado): entra al mismo panel que el dueño, pero no ve las ventas ni cambia los PIN.
+- **Barra**: funciona como otra mesa con su propio QR; cada persona puede tener su cuenta o compartirla con el código.
+- **Uber Eats / DiDi Food**: en la página de empleados se capturan con su número de pedido; entran a cocina con su etiqueta y en Ventas se ve cuánto vendió cada plataforma y lo que te queda después de la comisión (se configura en Ajustes).
 - **Administrador** (`/panel`): pedidos con su tiempo (5–10 min según el tamaño) y el tiempo real que tardaron, mesas abiertas para cobrar y cerrar, productos **agotados** con un toque, botón para **cerrar pedidos por hoy** (se abre solo al día siguiente) y códigos QR para imprimir.
 
 ---

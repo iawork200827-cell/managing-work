@@ -1,7 +1,7 @@
 // Panel del administrador: pedidos y tiempos, mesas (cuentas abiertas), productos, ajustes, QR
 // y botón para cerrar los pedidos del día.
 import {
-  collection, doc, onSnapshot, query, where, orderBy, writeBatch, updateDoc, addDoc, deleteDoc, setDoc,
+  collection, doc, onSnapshot, query, where, orderBy, writeBatch, updateDoc, addDoc, deleteDoc, setDoc, getDoc,
   serverTimestamp, Timestamp
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import {
@@ -9,7 +9,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   db, auth, configured, OWNER_EMAILS, $, esc, money, toMillis, toast, notConfiguredHtml,
-  STATUS_LABEL, DEFAULT_CONFIG, isClosed, endOfToday, prepMinutes, newId, summaryHtml
+  STATUS_LABEL, DEFAULT_CONFIG, isClosed, endOfToday, prepMinutes, newId, summaryHtml, tableLabel, tableIds, BAR_ID, PLATFORMS
 } from "./common.js";
 
 const state = {
@@ -19,6 +19,8 @@ const state = {
 };
 const cur = () => state.config.currency || "$";
 const isOwner = (u) => !!u && OWNER_EMAILS.map((e) => e.toLowerCase()).includes(String(u.email || "").toLowerCase());
+// Rol de quien usa el panel: "owner" (dueño) o "manager" (encargado: todo menos ver ventas y cambiar PIN)
+const isMgr = () => state.role === "manager";
 const fmtTime = (ms) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 const mins = (ms) => Math.max(0, Math.round(ms / 60000));
 
@@ -66,7 +68,7 @@ function listen() {
     render();
   }, onErr));
   // Claves de los QR de las mesas
-  state.unsubs.push(onSnapshot(doc(db, "staffConfig", "main"), (s) => {
+  if (!isMgr()) state.unsubs.push(onSnapshot(doc(db, "staffConfig", "main"), (s) => {
     state.staff = s.exists() ? s.data() : null;
     render();
   }, onErr));
@@ -85,7 +87,7 @@ function listen() {
     const before = new Set(Object.values(state.tabsOpen).filter((t) => t.billRequested).map((t) => t.id));
     state.tabsOpen = Object.fromEntries(s.docs.map((d) => [d.id, { id: d.id, ...d.data() }]));
     const asked = Object.values(state.tabsOpen).filter((t) => t.billRequested && !before.has(t.id));
-    if (state.seen && asked.length) { toast(`Mesa ${asked[0].table} pidió la cuenta`); beep(); }
+    if (state.seen && asked.length) { toast(`${tableLabel(asked[0].table)} pidió la cuenta`); beep(); }
     render();
   }, onErr));
   state.unsubs.push(onSnapshot(query(collection(db, "orders"), where("status", "in", ["por_pagar", "pendiente", "preparando", "listo"])), (s) => {
@@ -117,10 +119,13 @@ function render() {
   if (!configured) { app.innerHTML = notConfiguredHtml(); return; }
   if (!state.user) { app.innerHTML = loginHtml(); $("logoutBtn").hidden = true; $("soundBtn").hidden = true; return; }
   $("logoutBtn").hidden = false;
-  if (!isOwner(state.user)) {
-    app.innerHTML = `<div class="empty"><h2>Esta cuenta no tiene acceso</h2><p>${esc(state.user.email)} no está en la lista de dueños de <code>firebase-config.js</code>.</p></div>`;
+  if (!state.role) {
+    app.innerHTML = state.user.isAnonymous
+      ? `<div class="empty"><h2>Tu acceso es de mesero</h2><p>Usa la <a href="/empleados">página de empleados</a>. Si eres encargado, entra ahí con el PIN de encargado.</p></div>`
+      : `<div class="empty"><h2>Esta cuenta no tiene acceso</h2><p>${esc(state.user.email)} no está en la lista de dueños de <code>firebase-config.js</code>.</p></div>`;
     return;
   }
+  $("roleTag").textContent = isMgr() ? `Encargado: ${state.mgrName || ""}` : "Dueño";
   $("soundBtn").hidden = state.soundOn;
 
   const focusId = document.activeElement && document.activeElement.id;
@@ -134,7 +139,7 @@ function render() {
   const tabs = [
     ["pedidos", `Pedidos${pend ? ` (${pend})` : ""}`],
     ["mesas", `Mesas${openTables ? ` (${openTables})` : ""}${bills ? " · cuenta" : ""}`],
-    ["ventas", "Ventas"], ["facturas", `Facturas${(state.invoices || []).filter((i) => !i.done).length ? ` (${(state.invoices || []).filter((i) => !i.done).length})` : ""}`],
+    ...(isMgr() ? [] : [["ventas", "Ventas"]]), ["facturas", `Facturas${(state.invoices || []).filter((i) => !i.done).length ? ` (${(state.invoices || []).filter((i) => !i.done).length})` : ""}`],
     ["productos", "Productos"], ["ajustes", "Ajustes"], ["qr", "Códigos QR"]
   ];
   const closed = isClosed(state.config);
@@ -151,7 +156,7 @@ function render() {
   if (state.tab === "productos") html += productsHtml();
   if (state.tab === "ajustes") html += settingsHtml();
   if (state.tab === "qr") html += qrHtml();
-  if (state.tab === "ventas") html += salesHtml();
+  if (state.tab === "ventas" && !isMgr()) html += salesHtml();
   if (state.tab === "facturas") html += invoicesHtml();
   app.innerHTML = html;
   if (state.tab === "qr") drawQrs();
@@ -169,6 +174,7 @@ function loginHtml() {
     <input id="loginPass" type="password" autocomplete="current-password" required>
     <button class="primary" type="submit">Entrar</button>
     <button type="button" id="forgotBtn">Olvidé mi contraseña</button>
+    <p class="muted" style="margin:0;font-size:.85rem">¿Eres encargado? Escanea el QR de empleados y escribe el PIN de encargado.</p>
   </form>`;
 }
 
@@ -182,7 +188,8 @@ function itemsByPlate(items) {
 }
 
 function whoLabel(o) {
-  if (o.type === "mesa") return `<span class="tag">Mesa ${esc(o.table)}</span>`;
+  if (o.type === "plataforma") return `<span class="tag plat">${esc(PLATFORMS[o.platform] || o.platform)} #${esc(o.extRef)}</span> <strong>${esc(o.customer || "")}</strong>`;
+  if (o.type === "mesa") return `<span class="tag">${esc(tableLabel(o.table))}</span>`;
   if (o.type === "casa") return `<span class="tag casa">${o.delivery === "domicilio" ? "Domicilio" : "Casa · recoge"}</span> <strong>${esc(o.customer)}</strong>`;
   return `<span class="tag">Para llevar</span> <strong>${esc(o.customer)}</strong>`;
 }
@@ -223,14 +230,14 @@ function ordersHtml() {
   let html = `<div class="stats">
     <div class="stat"><span class="label">En fila</span><b>${inLine.length}</b></div>
     <div class="stat"><span class="label">Pedidos hoy</span><b>${todays.length}</b></div>
-    <div class="stat"><span class="label">Ventas hoy</span><b>${money(sales, cur())}</b></div>
+    ${isMgr() ? "" : `<div class="stat"><span class="label">Ventas hoy</span><b>${money(sales, cur())}</b></div>`}
     <div class="stat"><span class="label">Tiempo promedio real</span><b>${avg == null ? "—" : avg + " min"}</b></div>
     <div class="stat"><span class="label">Espera para nuevos</span><b>~${waitNew} min</b></div>
   </div>${payQueueHtml()}<div class="board">`;
   const NEXT = {
     pendiente: () => ["preparando", "Empezar a preparar"],
     preparando: () => ["listo", "Marcar listo"],
-    listo: (o) => ["entregado", o.type === "mesa" ? "Servido en mesa" : o.type === "casa" ? (o.delivery === "domicilio" ? "Entregado en domicilio" : "Entregado") : "Entregado y cobrado"]
+    listo: (o) => ["entregado", o.type === "mesa" ? "Servido en mesa" : o.type === "plataforma" ? "Entregado al repartidor" : o.type === "casa" ? (o.delivery === "domicilio" ? "Entregado en domicilio" : "Entregado") : "Entregado y cobrado"]
   };
   for (const s of ["pendiente", "preparando", "listo"]) {
     const list = orders.filter((o) => o.status === s).sort((a, b) => a.createdAt - b.createdAt);
@@ -287,7 +294,7 @@ function tablesHtml() {
     const rounds = roundsOfTab(tab);
     const total = rounds.reduce((s, r) => s + (Number(r.total) || 0), 0);
     const pending = rounds.filter((r) => r.status !== "entregado").length;
-    html += `<div class="order"><div class="row"><h3>Mesa ${esc(tab.table)}${perTable[tab.table] > 1 ? ` <span class="tag">${perTable[tab.table]} cuentas</span>` : ""}</h3>${tab.billRequested ? '<span class="tag bill">Pidió la cuenta</span>' : ""}</div>
+    html += `<div class="order"><div class="row"><h3>${esc(tableLabel(tab.table))}${perTable[tab.table] > 1 ? ` <span class="tag">${perTable[tab.table]} cuentas</span>` : ""}</h3>${tab.billRequested ? '<span class="tag bill">Pidió la cuenta</span>' : ""}</div>
       <div class="row"><span class="muted">${tab.name ? `<strong>${esc(tab.name)}</strong> · ` : ""}Cuenta <span class="mono">${esc(tab.code)}</span>${tab.openedBy ? ` · abrió ${esc(tab.openedBy)}` : ""} · abierta ${tab.openedAt ? fmtTime(toMillis(tab.openedAt)) : ""} · ${rounds.length} ${rounds.length === 1 ? "ronda" : "rondas"}${pending ? ` · ${pending} en cocina` : ""}</span><span class="price">${money(total, cur())}</span></div>
       ${summaryHtml(rounds.map((r) => r.items), cur(), "Resumen de la cuenta")}
       <details><summary class="muted">Ver por ronda</summary>${rounds.map((r, i) => `<div class="round"><div class="row"><strong>Ronda ${i + 1}</strong><span class="muted">${STATUS_LABEL[r.status]}</span><span class="price">${money(r.total, cur())}</span></div>${itemsByPlate(r.items)}</div>`).join("")}</details>
@@ -347,10 +354,14 @@ function settingsHtml() {
     <label>Minutos por pedido grande<input id="sMaxM" type="number" min="1" max="60" value="${esc(c.maxMinutes)}"></label>
     <label>Pedidos que preparan a la vez<input id="sCap" type="number" min="1" max="10" value="${esc(c.capacity)}"></label>
     <label>Número de mesas<input id="sTables" type="number" min="1" max="200" value="${esc(c.tables)}"></label>
+    <label>Comisión de Uber Eats (%)<input id="sUberFee" type="number" min="0" max="60" step="0.1" value="${esc(c.uberFee ?? "")}" placeholder="Ej. 30"></label>
+    <label>Comisión de DiDi Food (%)<input id="sDidiFee" type="number" min="0" max="60" step="0.1" value="${esc(c.didiFee ?? "")}" placeholder="Ej. 25"></label>
+    <label class="check"><input id="sBar" type="checkbox" ${c.bar !== false ? "checked" : ""}> Tenemos barra (con su propio QR)</label>
     <label>Banco (para pedidos desde casa)<input id="sBank" maxlength="40" value="${esc(c.bank)}" placeholder="BBVA, Banorte…"></label>
     <label>Titular de la cuenta<input id="sHolder" maxlength="60" value="${esc(c.holder)}"></label>
     <label>CLABE (18 dígitos)<input id="sClabe" maxlength="22" inputmode="numeric" value="${esc(c.clabe)}"></label>
-    <label>PIN de empleados (4 a 8 números)<input id="sPin" maxlength="8" inputmode="numeric" autocomplete="off" placeholder="${state.staff && state.staff.pin ? "••••  (escribe uno nuevo para cambiarlo)" : "Ej. 2580"}"></label>
+    ${isMgr() ? "" : `<label>PIN de meseros (4 a 8 números)<input id="sPin" maxlength="8" inputmode="numeric" autocomplete="off" placeholder="${state.staff && state.staff.pin ? "••••  (escribe uno nuevo para cambiarlo)" : "Ej. 2580"}"></label>
+    <label>PIN de encargado (4 a 8 números, distinto)<input id="sMgrPin" maxlength="8" inputmode="numeric" autocomplete="off" placeholder="${state.staff && state.staff.mgrPin ? "••••  (escribe uno nuevo para cambiarlo)" : "Ej. 7391"}"></label>`}
     <div><button class="primary" type="submit">Guardar ajustes</button></div>
   </form>
   <p class="muted">Cada pedido tarda entre el mínimo y el máximo según cuántas piezas lleva (hasta 3 piezas = mínimo; +1 minuto por cada 2 piezas más).
@@ -359,14 +370,13 @@ function settingsHtml() {
 
 function qrHtml() {
   const base = location.origin;
-  const tables = Math.min(200, Math.max(0, Number(state.config.tables) || 0));
   let cards = `<div class="qrcard"><div class="qr" data-url="${esc(base + "/llevar")}"></div><strong>Para llevar</strong><span>Escanea para pedir</span></div>
     <div class="qrcard"><div class="qr" data-url="${esc(base + "/casa")}"></div><strong>Pide desde casa</strong><span>${esc(base.replace(/^https?:\/\//, "") + "/casa")}</span></div>`;
-  for (let i = 1; i <= tables; i++) {
+  for (const i of tableIds(state.config)) {
     const key = state.keys[String(i)];
     cards += key
-      ? `<div class="qrcard"><div class="qr" data-url="${esc(base + "/mesa?m=" + i + "&k=" + key)}"></div><strong>Mesa ${i}</strong><span>Escanea para ordenar</span></div>`
-      : `<div class="qrcard"><strong>Mesa ${i}</strong><span>Generando código…</span></div>`;
+      ? `<div class="qrcard"><div class="qr" data-url="${esc(base + "/mesa?m=" + i + "&k=" + key)}"></div><strong>${tableLabel(i)}</strong><span>Escanea para ordenar</span></div>`
+      : `<div class="qrcard"><strong>${tableLabel(i)}</strong><span>Generando código…</span></div>`;
   }
   return `<div class="no-print" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
       <button class="primary" id="sheetBtn">Descargar códigos (imagen)</button>
@@ -375,10 +385,10 @@ function qrHtml() {
     <div id="sheetOut" class="no-print"></div>
     <div class="qrgrid">${cards}</div>
     <h2 style="margin:24px 0 8px">QR de empleados</h2>
-    ${state.staff && state.staff.key
+    ${isMgr() ? `<p class="muted">El QR de empleados solo lo ve el dueño.</p>` : state.staff && state.staff.key
       ? `<p class="muted" style="margin:0 0 10px">Solo para tu personal: al escanearlo piden su nombre y el PIN de empleados. No lo pegues en las mesas. Para guardarlo, haz una captura de pantalla.</p>
          <div class="qrgrid"><div class="qrcard staffcard"><div class="qr" data-url="${esc(location.origin + "/empleados?k=" + state.staff.key)}"></div><strong>Empleados</strong><span>Requiere PIN</span></div></div>`
-      : `<div class="empty">Primero pon un <strong>PIN de empleados</strong> en Ajustes y aquí aparecerá el QR.</div>`}`;
+      : `<div class="empty">Primero pon un <strong>PIN de meseros</strong> en Ajustes y aquí aparecerá el QR.</div>`}`;
 }
 
 // Arma una hoja (tamaño carta/A4) con todos los QR en una imagen que se puede guardar e imprimir
@@ -421,10 +431,9 @@ function buildSheet() {
 let ensuring = false;
 async function ensureKeys() {
   if (ensuring || !state.keysLoaded) return;
-  const n = Math.min(200, Math.max(0, Number(state.config.tables) || 0));
   const missing = [];
-  // Solo crea claves para mesas que no tengan; las existentes nunca se cambian
-  for (let i = 1; i <= n; i++) if (!state.keys[String(i)]) missing.push(String(i));
+  // Solo crea claves para mesas (y la barra) que no tengan; las existentes nunca se cambian
+  for (const id of tableIds(state.config)) if (!state.keys[id]) missing.push(id);
   if (!missing.length) return;
   ensuring = true;
   try {
@@ -478,8 +487,9 @@ function loadSalesDay(key) {
   }, (e) => { console.error(e); toast("No se pudieron leer las ventas de ese día"); });
 }
 
-const METHOD_LABEL = { efectivo: "Efectivo", tarjeta: "Tarjeta", transferencia: "Transferencia" };
+const METHOD_LABEL = { efectivo: "Efectivo", tarjeta: "Tarjeta", transferencia: "Transferencia", uber: "Uber Eats", didi: "DiDi Food" };
 function methodOf(o) {
+  if (o.type === "plataforma") return o.platform;
   if (o.payMethod) return o.payMethod;
   if (o.type === "llevar" && o.status === "entregado") return "efectivo"; // se paga al recoger
   return "";
@@ -500,7 +510,8 @@ function salesOf(orders) {
     const voided = live.length === 0;
     const total = (voided ? g.orders : live).reduce((s, o) => s + (Number(o.total) || 0), 0);
     const first = g.orders.reduce((a, b) => (a.createdAt < b.createdAt ? a : b));
-    const paid = live.length > 0 && live.every((o) => o.paid || (o.type === "llevar" && o.status === "entregado"));
+    // Uber Eats / DiDi Food ya vienen pagados por la plataforma
+    const paid = live.length > 0 && live.every((o) => o.paid || o.type === "plataforma" || (o.type === "llevar" && o.status === "entregado"));
     const tabInfo = g.type === "mesa" ? state.tabsOpen[g.session] : null;
     return { ...g, voided, total, time: first.createdAt, method: methodOf(live[0] || g.orders[0]), paid, open: g.type === "mesa" && !!tabInfo, code: tabInfo ? tabInfo.code : first.code };
   }).sort((a, b) => b.time - a.time);
@@ -525,13 +536,19 @@ function salesHtml() {
     <div class="stat"><span class="label">Total vendido</span><b>${money(sum(valid), cur())}</b></div>
     <div class="stat"><span class="label">Ventas</span><b>${valid.length}</b></div>
     ${["efectivo", "tarjeta", "transferencia"].map((m) => `<div class="stat"><span class="label">${METHOD_LABEL[m]}</span><b>${money(byMethod[m] || 0, cur())}</b></div>`).join("")}
+    ${["uber", "didi"].map((m) => {
+      const fee = Number(state.config[m + "Fee"]) || 0, gross = byMethod[m] || 0;
+      return `<div class="stat"><span class="label">${METHOD_LABEL[m]}</span><b>${money(gross, cur())}</b>${fee ? `<span class="muted" style="font-size:.8rem">Te queda ${money(gross * (1 - fee / 100), cur())} (comisión ${fee}%)</span>` : ""}</div>`;
+    }).join("")}
     <div class="stat"><span class="label">Por cobrar</span><b>${money(sum(pending), cur())}</b></div>
     <div class="stat"><span class="label">Anuladas</span><b>${sales.length - valid.length}</b></div>
   </div>`;
   if (!sales.length) return html + '<div class="empty">No hay ventas este día.</div>';
   html += '<div class="plist">';
   for (const v of sales) {
-    const who = v.type === "mesa" ? `Mesa ${esc(v.table)} · cuenta <span class="mono">${esc(v.code || "")}</span>` : `${v.type === "casa" ? "Desde casa" : "Para llevar"} · ${esc(v.who)} <span class="mono muted">#${esc(v.code || "")}</span>`;
+    const p0 = v.orders[0];
+    const who = v.type === "plataforma" ? `<span class="tag plat">${esc(PLATFORMS[p0.platform] || "")} #${esc(p0.extRef || "")}</span> ${esc(v.who)}`
+      : v.type === "mesa" ? `${esc(tableLabel(v.table))} · cuenta <span class="mono">${esc(v.code || "")}</span>` : `${v.type === "casa" ? "Desde casa" : "Para llevar"} · ${esc(v.who)} <span class="mono muted">#${esc(v.code || "")}</span>`;
     const state_ = v.voided ? '<span class="tag bill">Anulada</span>' : v.open ? '<span class="tag">Cuenta abierta</span>' : v.paid ? `<span class="tag casa">${METHOD_LABEL[v.method] || "Cobrada"}</span>` : '<span class="tag">Por cobrar</span>';
     html += `<div class="prow ${v.voided ? "voided" : ""}"><div><div>${who} ${state_}</div>
         <div class="muted" style="font-size:.82rem">${fmtTime(v.time)} · ${v.orders.length > 1 ? v.orders.length + " rondas" : "1 pedido"}</div>
@@ -579,6 +596,7 @@ function setStatus(id, status) {
     const patch = { status };
     if (status !== "cancelado") patch[status + "At"] = serverTimestamp();
     if (status === "entregado" && o && o.type === "llevar") patch.paid = true;
+    if (status === "entregado" && o && o.type === "plataforma") { patch.paid = true; patch.payMethod = o.platform; }
     b.update(doc(db, "orders", id), patch);
     if (o && o.type === "mesa" && o.session) b.set(doc(db, "tabs", o.session, "rounds", id), { status }, { merge: true });
     if (status === "entregado" || status === "cancelado") b.delete(doc(db, "queue", id));
@@ -605,7 +623,7 @@ function closeTab(tabId, method) {
       b.update(doc(db, "orders", r.id), patch);
     }
     await b.commit();
-  }, `Mesa ${tab.table} (cuenta ${tab.code}) cobrada y cerrada`);
+  }, `${tableLabel(tab.table)} (cuenta ${tab.code}) cobrada y cerrada`);
 }
 
 // Carnes que el cliente puede escoger en tacos, burritos, quesadillas, gringas y tortas.
@@ -764,29 +782,43 @@ document.addEventListener("submit", (ev) => {
       maxMinutes: Math.min(60, Math.max(minM, Number($("sMaxM").value) || 10)),
       capacity: Math.min(10, Math.max(1, Number($("sCap").value) || 1)),
       tables: Math.min(200, Math.max(1, Number($("sTables").value) || 1)),
+      bar: $("sBar").checked,
+      uberFee: Math.min(60, Math.max(0, Number($("sUberFee").value) || 0)),
+      didiFee: Math.min(60, Math.max(0, Number($("sDidiFee").value) || 0)),
       bank: $("sBank").value.trim(),
       holder: $("sHolder").value.trim(),
       clabe: $("sClabe").value.replace(/\s/g, "")
     };
     if (body.clabe && !/^\d{18}$/.test(body.clabe)) { toast("La CLABE debe tener 18 dígitos"); return; }
-    const pin = $("sPin").value.trim();
-    if (pin && !/^\d{4,8}$/.test(pin)) { toast("El PIN debe tener de 4 a 8 números"); return; }
+    const pin = isMgr() ? "" : $("sPin").value.trim();
+    const mgrPin = isMgr() ? "" : $("sMgrPin").value.trim();
+    if ((pin && !/^\d{4,8}$/.test(pin)) || (mgrPin && !/^\d{4,8}$/.test(mgrPin))) { toast("Cada PIN debe tener de 4 a 8 números"); return; }
+    const curPin = pin || (state.staff && state.staff.pin) || "", curMgr = mgrPin || (state.staff && state.staff.mgrPin) || "";
+    if (curPin && curMgr && curPin === curMgr) { toast("El PIN de encargado debe ser distinto al de meseros"); return; }
+    state.resetForms = true;
     write(async () => {
       await setDoc(doc(db, "config", "shop"), body);
-      // Cambiar el PIN saca a todos los empleados; el QR de empleados no cambia
-      if (pin) await setDoc(doc(db, "staffConfig", "main"), { pin, key: (state.staff && state.staff.key) || newId(16) });
-    }, pin ? "Ajustes y PIN de empleados guardados" : "Ajustes guardados");
+      // Cambiar un PIN saca a quienes entraron con el anterior; el QR de empleados no cambia
+      if (pin || mgrPin) await setDoc(doc(db, "staffConfig", "main"), { pin: curPin, mgrPin: curMgr, key: (state.staff && state.staff.key) || newId(16) });
+    }, pin || mgrPin ? "Ajustes y PIN guardados" : "Ajustes guardados");
   }
 });
 
 // ---------- arranque ----------
 render();
 if (configured) {
-  onAuthStateChanged(auth, (u) => {
+  onAuthStateChanged(auth, async (u) => {
     state.unsubs.forEach((f) => f()); state.unsubs = [];
     state.user = u; state.seen = null; state.active.clear(); state.today.clear(); state.tables = [];
     state.secrets = {}; state.tabsOpen = {}; state.keys = {}; state.keysLoaded = false; state.staff = null; state.invoices = null;
-    if (u && isOwner(u)) listen();
+    state.role = null;
+    if (u && isOwner(u)) state.role = "owner";
+    else if (u && u.isAnonymous) {
+      // Encargado: entró en /empleados con el PIN de encargado
+      const s = await getDoc(doc(db, "staffSessions", u.uid)).catch(() => null);
+      if (s && s.exists() && s.data().role === "encargado") { state.role = "manager"; state.mgrName = s.data().name; if (state.tab === "ventas") state.tab = "pedidos"; }
+    }
+    if (state.role) listen();
     render();
   });
   // Actualiza los minutos transcurridos cada 30 segundos
