@@ -157,3 +157,19 @@ export function platesHtml(items) {
   }
   return keys.map((k) => `<div class="plate-label ${toGo(groups[k]) ? "togo" : ""}">Plato ${k}${toGo(groups[k]) ? " · PARA LLEVAR" : ""}</div>${list(groups[k])}`).join("");
 }
+
+// ---------- propinas ----------
+// choice = { pct: 0 | 10 | 15 | 20 } o { custom: número en pesos }
+export function tipAmount(total, choice) {
+  if (!choice) return 0;
+  if (choice.custom != null && choice.custom !== "") return Math.max(0, Math.round((Number(choice.custom) || 0) * 100) / 100);
+  return Math.round((Number(total) || 0) * (Number(choice.pct) || 0)) / 100;
+}
+export function tipPickerHtml(tabId, total, choice, currency = "$") {
+  const c = choice || { pct: 0 };
+  const pcts = [0, 10, 15, 20];
+  return `<div class="tips"><span class="label">Propina</span>
+    ${pcts.map((p) => `<button type="button" class="${c.custom == null && Number(c.pct || 0) === p ? "on" : ""}" data-tip="${esc(tabId)}" data-pct="${p}">${p ? p + "%" : "Sin propina"}</button>`).join("")}
+    <input id="tipc-${esc(tabId)}" data-tipcustom="${esc(tabId)}" type="number" min="0" step="1" inputmode="decimal" placeholder="Otra $" value="${c.custom != null ? esc(c.custom) : ""}" style="width:90px">
+    <span class="mono">${money(tipAmount(total, c), currency)}</span></div>`;
+}

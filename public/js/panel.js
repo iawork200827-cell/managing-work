@@ -1,7 +1,7 @@
 // Panel del administrador: pedidos y tiempos, mesas (cuentas abiertas), productos, ajustes, QR
 // y botón para cerrar los pedidos del día.
 import {
-  collection, doc, onSnapshot, query, where, orderBy, writeBatch, updateDoc, addDoc, deleteDoc, setDoc, getDoc,
+  collection, doc, onSnapshot, query, where, orderBy, writeBatch, updateDoc, addDoc, deleteDoc, setDoc, getDoc, getDocs, deleteField, limit,
   serverTimestamp, Timestamp
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import {
@@ -9,11 +9,11 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   db, auth, configured, OWNER_EMAILS, $, esc, money, toMillis, toast, notConfiguredHtml,
-  STATUS_LABEL, DEFAULT_CONFIG, isClosed, endOfToday, prepMinutes, newId, summaryHtml, tableLabel, tableIds, BAR_ID, platesHtml, PLATFORMS
+  STATUS_LABEL, DEFAULT_CONFIG, isClosed, endOfToday, prepMinutes, newId, summaryHtml, tableLabel, tableIds, BAR_ID, platesHtml, PLATFORMS, tipPickerHtml, tipAmount
 } from "./common.js";
 
 const state = {
-  user: null, tab: "pedidos", config: { ...DEFAULT_CONFIG }, products: [], tables: [], secrets: {}, tabsOpen: {}, keys: {},
+  user: null, tab: "pedidos", tips: {}, config: { ...DEFAULT_CONFIG }, products: [], tables: [], secrets: {}, tabsOpen: {}, keys: {},
   active: new Map(), today: new Map(), editId: null, resetForms: false,
   seen: null, seenRefs: new Set(), fresh: new Set(), soundOn: false, unsubs: []
 };
@@ -88,6 +88,10 @@ function listen() {
     state.tabsOpen = Object.fromEntries(s.docs.map((d) => [d.id, { id: d.id, ...d.data() }]));
     const asked = Object.values(state.tabsOpen).filter((t) => t.billRequested && !before.has(t.id));
     if (state.seen && asked.length) { toast(`${tableLabel(asked[0].table)} pidió la cuenta`); beep(); }
+    const calls = Object.values(state.tabsOpen).filter((t) => t.call && t.call.reason).map((t) => t.id + toMillis(t.call.at));
+    const newCall = calls.find((c) => !(state.seenCalls || new Set()).has(c));
+    if (state.seenCalls && newCall) { toast("Una mesa está llamando al mesero"); beep(); }
+    state.seenCalls = new Set(calls);
     render();
   }, onErr));
   state.unsubs.push(onSnapshot(query(collection(db, "orders"), where("status", "in", ["por_pagar", "pendiente", "preparando", "listo"])), (s) => {
@@ -139,7 +143,7 @@ function render() {
   const tabs = [
     ["pedidos", `Pedidos${pend ? ` (${pend})` : ""}`],
     ["mesas", `Mesas${openTables ? ` (${openTables})` : ""}${bills ? " · cuenta" : ""}`],
-    ...(isMgr() ? [] : [["ventas", "Ventas"]]), ["facturas", `Facturas${(state.invoices || []).filter((i) => !i.done).length ? ` (${(state.invoices || []).filter((i) => !i.done).length})` : ""}`],
+    ...(isMgr() ? [] : [["ventas", "Ventas"], ["corte", "Corte de caja"], ["reportes", "Reportes"]]), ["facturas", `Facturas${(state.invoices || []).filter((i) => !i.done).length ? ` (${(state.invoices || []).filter((i) => !i.done).length})` : ""}`],
     ["productos", "Productos"], ["promos", "Promociones"], ["ajustes", "Ajustes"], ["qr", "Códigos QR"]
   ];
   const closed = isClosed(state.config);
@@ -150,6 +154,8 @@ function render() {
       <button id="dayBtn" class="${closed ? "primary" : "danger"}">${closed ? "Abrir pedidos" : "Cerrar pedidos por hoy"}</button>
     </span>
   </div>`;
+  const calling = Object.values(state.tabsOpen).filter((t) => t.call && t.call.reason);
+  if (calling.length) html += `<div class="callbar">${calling.map((t) => `<div class="order"><div class="row"><strong>${esc(tableLabel(t.table))}${t.name ? " · " + esc(t.name) : ""}</strong><span class="tag bill">Llama al mesero: ${esc(t.call.reason)}</span><button data-callok="${esc(t.id)}">Atendido</button></div></div>`).join("")}</div>`;
   html += '<div class="tabs">' + tabs.map(([k, l]) => `<button data-tab="${k}" class="${state.tab === k ? "on" : ""}">${l}</button>`).join("") + "</div>";
   if (state.tab === "pedidos") html += ordersHtml();
   if (state.tab === "mesas") html += tablesHtml();
@@ -159,6 +165,8 @@ function render() {
   if (state.tab === "ventas" && !isMgr()) html += salesHtml();
   if (state.tab === "facturas") html += invoicesHtml();
   if (state.tab === "promos") html += promosHtml();
+  if (state.tab === "corte" && !isMgr()) html += corteHtml();
+  if (state.tab === "reportes" && !isMgr()) html += reportsHtml();
   app.innerHTML = html;
   if (state.tab === "qr") drawQrs();
 
@@ -292,6 +300,7 @@ function tablesHtml() {
       <div class="row"><span class="muted">${tab.name ? `<strong>${esc(tab.name)}</strong> · ` : ""}Cuenta <span class="mono">${esc(tab.code)}</span>${tab.openedBy ? ` · abrió ${esc(tab.openedBy)}` : ""} · abierta ${tab.openedAt ? fmtTime(toMillis(tab.openedAt)) : ""} · ${rounds.length} ${rounds.length === 1 ? "ronda" : "rondas"}${pending ? ` · ${pending} en cocina` : ""}</span><span class="price">${money(total, cur())}</span></div>
       ${summaryHtml(rounds.map((r) => r.items), cur(), "Resumen de la cuenta", rounds.reduce((a, r) => a + (Number(r.discount) || 0), 0))}
       <details><summary class="muted">Ver por ronda</summary>${rounds.map((r, i) => `<div class="round"><div class="row"><strong>Ronda ${i + 1}</strong><span class="muted">${STATUS_LABEL[r.status]}</span><span class="price">${money(r.total, cur())}</span></div>${itemsByPlate(r.items)}</div>`).join("")}</details>
+      ${tipPickerHtml(tab.id, total, state.tips[tab.id], cur())}
       <div class="acts"><button class="primary" data-close="${esc(tab.id)}" data-method="efectivo">Cobrado en efectivo</button>
         <button data-close="${esc(tab.id)}" data-method="tarjeta">Cobrado con tarjeta</button></div></div>`;
   }
@@ -354,6 +363,8 @@ function settingsHtml() {
     <label>Número de mesas<input id="sTables" type="number" min="1" max="200" value="${esc(c.tables)}"></label>
     <label>Comisión de Uber Eats (%)<input id="sUberFee" type="number" min="0" max="60" step="0.1" value="${esc(c.uberFee ?? "")}" placeholder="Ej. 30"></label>
     <label>Comisión de DiDi Food (%)<input id="sDidiFee" type="number" min="0" max="60" step="0.1" value="${esc(c.didiFee ?? "")}" placeholder="Ej. 25"></label>
+    <label>Fondo de caja (efectivo con el que abres)<input id="sFloat" type="number" min="0" step="1" value="${esc(c.cashFloat ?? "")}" placeholder="Ej. 500"></label>
+    <label>Enlace para reseñas en Google (opcional)<input id="sGoogle" maxlength="300" placeholder="https://g.page/r/..." value="${esc(c.googleReviewUrl || "")}"></label>
     <label>Notas rápidas en la comida (separadas por coma)<input id="sNotes" maxlength="200" value="${esc((c.quickNotes && c.quickNotes.length ? c.quickNotes : ["Con todo", "Sin cebolla", "Sin cilantro", "Sin salsa"]).join(", "))}"></label>
     <label>Categoría que se sugiere antes de enviar<input id="sUpsell" maxlength="40" value="${esc(c.upsellCategory || "Bebidas")}"></label>
     <label class="check"><input id="sBar" type="checkbox" ${c.bar !== false ? "checked" : ""}> Tenemos barra (con su propio QR)</label>
@@ -450,6 +461,122 @@ function drawQrs() {
     if (window.QRCode) new QRCode(el, { text: el.dataset.url, width: 160, height: 160, colorDark: "#111111", colorLight: "#ffffff", correctLevel: QRCode.CorrectLevel.M });
     else el.textContent = el.dataset.url;
   });
+}
+
+// ---------- datos por periodo (corte y reportes, solo dueño) ----------
+async function loadRange(from) {
+  const [o, t, r] = await Promise.all([
+    getDocs(query(collection(db, "orders"), where("createdAt", ">=", Timestamp.fromDate(from)), orderBy("createdAt", "asc"))),
+    getDocs(query(collection(db, "tabs"), where("closedAt", ">=", Timestamp.fromDate(from)))),
+    getDocs(query(collection(db, "reviews"), where("createdAt", ">=", Timestamp.fromDate(from))))
+  ]);
+  return { orders: o.docs.map(toOrder), tabs: t.docs.map((d) => ({ id: d.id, ...d.data() })), reviews: r.docs.map((d) => ({ id: d.id, ...d.data() })) };
+}
+
+// ---------- corte de caja ----------
+async function refreshCorte() {
+  const last = await getDocs(query(collection(db, "cortes"), orderBy("at", "desc"), limit(10)));
+  state.cortes = last.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const from = state.cortes.length ? toMillis(state.cortes[0].at) : (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); })();
+  state.corteFrom = from;
+  state.corteData = await loadRange(new Date(from));
+  render();
+}
+function corteTotals(data) {
+  const by = { efectivo: 0, tarjeta: 0, transferencia: 0, uber: 0, didi: 0 };
+  for (const o of data.orders) {
+    if (o.status === "cancelado" || o.status === "por_pagar") continue;
+    const paid = o.paid || o.type === "plataforma" || (o.type === "llevar" && o.status === "entregado");
+    if (!paid) continue;
+    const m = o.type === "plataforma" ? o.platform : o.payMethod || (o.type === "llevar" ? "efectivo" : "");
+    if (m in by) by[m] += Number(o.total) || 0;
+  }
+  const tips = { efectivo: 0, tarjeta: 0 }, tipsBy = {};
+  for (const t of data.tabs) if (t.closed && t.tip) {
+    if (t.payMethod in tips) tips[t.payMethod] += Number(t.tip) || 0;
+    tipsBy[t.tipBy || "?"] = (tipsBy[t.tipBy || "?"] || 0) + (Number(t.tip) || 0);
+  }
+  return { by, tips, tipsBy };
+}
+function corteHtml() {
+  if (!state.corteData) { if (!state.corteLoading) { state.corteLoading = true; refreshCorte().finally(() => (state.corteLoading = false)); } return '<p class="muted">Cargando…</p>'; }
+  const { by, tips, tipsBy } = corteTotals(state.corteData);
+  const fondo = Number(state.config.cashFloat) || 0;
+  const expected = fondo + by.efectivo + tips.efectivo;
+  const counted = state.corteCounted;
+  const diff = counted === "" || counted == null ? null : Number(counted) - expected;
+  const row = (l, v, strong) => `<div class="prow"><span>${strong ? `<strong>${l}</strong>` : l}</span><span class="price">${money(v, cur())}</span></div>`;
+  let html = `<p class="muted">Desde ${new Date(state.corteFrom).toLocaleString([], { dateStyle: "short", timeStyle: "short" })} (${state.cortes.length ? "último corte" : "inicio del día"}) hasta ahora. <button data-cortereload>Actualizar</button></p>
+    <div class="plist">
+      ${row("Fondo de caja (Ajustes)", fondo)}
+      ${row("Ventas en efectivo", by.efectivo)}
+      ${row("Propinas en efectivo", tips.efectivo)}
+      ${row("Efectivo que debe haber", expected, true)}
+    </div>
+    <form class="form" id="corteForm" style="margin-top:12px">
+      <label>Efectivo contado<input id="corteCounted" type="number" step="0.5" min="0" inputmode="decimal" value="${esc(counted ?? "")}"></label>
+      <label>Notas (opcional)<input id="corteNote" maxlength="200"></label>
+      <div>${diff == null ? "" : `<div class="${diff === 0 ? "promo-line" : "late"}" style="margin-bottom:8px">${diff === 0 ? "Cuadra exacto" : diff > 0 ? `Sobran ${money(diff, cur())}` : `Faltan ${money(-diff, cur())}`}</div>`}
+      <button class="primary" type="submit">Hacer corte</button></div></form>
+    <h3>Otros cobros (no son efectivo)</h3><div class="plist">
+      ${row("Tarjeta", by.tarjeta)}${row("Propinas con tarjeta", tips.tarjeta)}${row("Transferencia", by.transferencia)}${row("Uber Eats", by.uber)}${row("DiDi Food", by.didi)}</div>
+    ${Object.keys(tipsBy).length ? `<h3>Propinas por persona</h3><div class="plist">${Object.entries(tipsBy).map(([k, v]) => row(esc(k), v)).join("")}</div>` : ""}`;
+  if (state.cortes.length) html += `<h3>Cortes anteriores</h3><div class="plist">${state.cortes.map((c) => `<div class="prow"><div>${new Date(toMillis(c.at)).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}${c.note ? ` · <span class="muted">${esc(c.note)}</span>` : ""}</div>
+      <div class="acts"><span class="mono">Esperado ${money(c.expected, cur())} · contado ${money(c.counted, cur())}</span><span class="${c.diff === 0 ? "promo-line" : "late"}">${c.diff === 0 ? "cuadra" : (c.diff > 0 ? "+" : "−") + money(Math.abs(c.diff), cur())}</span></div></div>`).join("")}</div>`;
+  return html;
+}
+
+// ---------- reportes ----------
+async function refreshReports() {
+  const days = state.repDays || 7;
+  const from = new Date(); from.setHours(0, 0, 0, 0); from.setDate(from.getDate() - (days - 1));
+  state.repData = await loadRange(from);
+  render();
+}
+function bars(rows, fmt) {
+  const max = Math.max(1, ...rows.map((r) => r[1]));
+  return `<div class="bars">${rows.map(([l, v]) => `<div class="bar"><span class="bl">${esc(l)}</span><span class="bt"><span style="width:${Math.round((v / max) * 100)}%"></span></span><span class="bv mono">${fmt(v)}</span></div>`).join("")}</div>`;
+}
+function reportsHtml() {
+  const days = state.repDays || 7;
+  let html = `<div class="tabs">${[[1, "Hoy"], [7, "7 días"], [30, "30 días"]].map(([d, l]) => `<button data-repdays="${d}" class="${days === d ? "on" : ""}">${l}</button>`).join("")}</div>`;
+  if (!state.repData) { if (!state.repLoading) { state.repLoading = true; refreshReports().finally(() => (state.repLoading = false)); } return html + '<p class="muted">Cargando…</p>'; }
+  const orders = state.repData.orders.filter((o) => o.status !== "cancelado" && o.status !== "por_pagar");
+  const sales = orders.reduce((s, o) => s + (Number(o.total) || 0), 0);
+  const tickets = new Set(orders.map((o) => (o.type === "mesa" ? "t" + o.session : o.id))).size;
+  const prod = {}, meat = {}, hours = Array(24).fill(0), chan = {}, emp = {};
+  for (const o of orders) {
+    for (const i of o.items || []) {
+      const base = i.option ? i.name.split(" de ")[0] : i.name.split(" + ")[0].split(" (")[0];
+      prod[base] = prod[base] || { q: 0, m: 0 }; prod[base].q += i.qty; prod[base].m += i.qty * i.price;
+      if (i.option) meat[i.option] = (meat[i.option] || 0) + i.qty;
+    }
+    hours[new Date(o.createdAt).getHours()]++;
+    const c = o.type === "plataforma" ? (o.platform === "uber" ? "Uber Eats" : "DiDi Food") : { mesa: "Mesa / barra", llevar: "Para llevar", casa: "Desde casa" }[o.type] || o.type;
+    chan[c] = (chan[c] || 0) + (Number(o.total) || 0);
+    if (o.takenBy) emp[o.takenBy] = (emp[o.takenBy] || 0) + 1;
+  }
+  const revs = state.repData.reviews;
+  const avg = revs.length ? revs.reduce((s, r) => s + r.stars, 0) / revs.length : 0;
+  const tipsBy = corteTotals(state.repData).tipsBy;
+  const top = Object.entries(prod).sort((a, b) => b[1].q - a[1].q).slice(0, 10);
+  html += `<div class="stats">
+    <div class="stat"><span class="label">Ventas</span><b>${money(sales, cur())}</b></div>
+    <div class="stat"><span class="label">Tickets</span><b>${tickets}</b></div>
+    <div class="stat"><span class="label">Ticket promedio</span><b>${money(tickets ? sales / tickets : 0, cur())}</b></div>
+    <div class="stat"><span class="label">Calificación</span><b>${revs.length ? avg.toFixed(1) + " ★" : "—"}</b><span class="muted" style="font-size:.8rem">${revs.length} reseñas</span></div></div>
+    <div class="board">
+      <div class="col"><h3>Lo más vendido (piezas)</h3>${top.length ? bars(top.map(([k, v]) => [k, v.q]), (v) => v) : '<p class="muted">Sin ventas</p>'}</div>
+      <div class="col"><h3>Carnes</h3>${Object.keys(meat).length ? bars(Object.entries(meat).sort((a, b) => b[1] - a[1]), (v) => v) : '<p class="muted">Sin datos</p>'}</div>
+      <div class="col"><h3>Ventas por canal</h3>${Object.keys(chan).length ? bars(Object.entries(chan).sort((a, b) => b[1] - a[1]), (v) => money(v, cur())) : '<p class="muted">Sin datos</p>'}</div>
+    </div>
+    <h3>Horas pico (pedidos por hora)</h3>${bars(hours.map((v, h) => [`${String(h).padStart(2, "0")}:00`, v]).filter(([, v]) => v > 0), (v) => v)}
+    <div class="board" style="margin-top:14px">
+      <div class="col"><h3>Pedidos tomados por empleado</h3>${Object.keys(emp).length ? bars(Object.entries(emp).sort((a, b) => b[1] - a[1]), (v) => v) : '<p class="muted">Sin datos</p>'}</div>
+      <div class="col"><h3>Propinas por persona</h3>${Object.keys(tipsBy).length ? bars(Object.entries(tipsBy), (v) => money(v, cur())) : '<p class="muted">Sin propinas</p>'}</div>
+    </div>
+    <h3>Reseñas recientes</h3>${revs.length ? `<div class="plist">${[...revs].sort((a, b) => toMillis(b.createdAt) - toMillis(a.createdAt)).slice(0, 20).map((r) => `<div class="prow"><span>${"★".repeat(r.stars)}${"☆".repeat(5 - r.stars)} ${esc(r.comment || "")}</span><span class="muted">${new Date(toMillis(r.createdAt)).toLocaleDateString()}</span></div>`).join("")}</div>` : '<p class="muted">Todavía no hay reseñas.</p>'}`;
+  return html;
 }
 
 // ---------- promociones ----------
@@ -661,7 +788,8 @@ function closeTab(tabId, method) {
   const total = rounds.reduce((s, r) => s + (Number(r.total) || 0), 0);
   return write(async () => {
     const b = writeBatch(db);
-    b.set(doc(db, "tabs", tabId), { closed: true, billRequested: false, total, payMethod: method, closedAt: serverTimestamp() }, { merge: true });
+    const tip = tipAmount(total, state.tips[tabId]);
+    b.set(doc(db, "tabs", tabId), { closed: true, billRequested: false, total, payMethod: method, closedAt: serverTimestamp(), tip, tipBy: isMgr() ? (state.mgrName || "Encargado") : "Dueño", call: deleteField() }, { merge: true });
     for (const r of rounds) {
       const patch = { paid: true, payMethod: method };
       if (r.status !== "entregado") {
@@ -714,6 +842,10 @@ document.addEventListener("click", (ev) => {
     if (!t.dataset.confirm) { t.dataset.confirm = "1"; t.textContent = "¿Borrar? Toca otra vez"; return; }
     const promos = [...(state.config.promos || [])]; promos.splice(Number(d.promodel), 1); savePromos(promos, "Promoción borrada"); return;
   }
+  if (d.repdays) { state.repDays = Number(d.repdays); state.repData = null; render(); return; }
+  if ("cortereload" in d) { state.corteData = null; render(); return; }
+  if (d.callok) { write(() => updateDoc(doc(db, "tabs", d.callok), { call: deleteField() })); return; }
+  if (d.tip) { state.tips[d.tip] = { pct: Number(d.pct) }; render(); return; }
   if (d.invoice) { write(() => updateDoc(doc(db, "invoices", d.invoice), { done: d.done === "1" }), d.done === "1" ? "Factura marcada como hecha" : null); return; }
   if (d.confirmpay) {
     const o = allOrders().find((x) => x.id === d.confirmpay);
@@ -802,6 +934,12 @@ document.addEventListener("click", (ev) => {
   }
 });
 
+document.addEventListener("input", (ev) => {
+  const t = ev.target;
+  if (t.dataset && t.dataset.tipcustom) { state.tips[t.dataset.tipcustom] = { custom: t.value }; }
+  if (t.id === "corteCounted") { state.corteCounted = t.value; }
+});
+
 document.addEventListener("change", (ev) => {
   if (ev.target.id === "salesDay" && ev.target.value) { state.salesDay = ev.target.value; state.resetForms = true; render(); }
 });
@@ -812,6 +950,20 @@ document.addEventListener("submit", (ev) => {
   if (id === "loginForm") {
     signInWithEmailAndPassword(auth, $("loginEmail").value.trim(), $("loginPass").value)
       .catch(() => toast("Correo o contraseña incorrectos"));
+  }
+  if (id === "corteForm") {
+    const { by, tips } = corteTotals(state.corteData);
+    const fondo = Number(state.config.cashFloat) || 0;
+    const expected = Math.round((fondo + by.efectivo + tips.efectivo) * 100) / 100;
+    const counted = Number($("corteCounted").value);
+    if (!$("corteCounted").value || isNaN(counted)) { toast("Escribe el efectivo contado"); return; }
+    state.resetForms = true;
+    write(async () => {
+      await addDoc(collection(db, "cortes"), { at: serverTimestamp(), from: Timestamp.fromMillis(state.corteFrom), expected, counted, diff: Math.round((counted - expected) * 100) / 100,
+        byMethod: by, tips, note: $("corteNote").value.trim().slice(0, 200), by: "Dueño" });
+      state.corteCounted = ""; state.corteData = null;
+    }, "Corte de caja guardado").then(() => render());
+    return;
   }
   if (id === "promoForm") {
     const kind = $("prKind").value, pct = Number($("prPct").value) || 0;
@@ -861,6 +1013,8 @@ document.addEventListener("submit", (ev) => {
       bar: $("sBar").checked,
       quickNotes: $("sNotes").value.split(",").map((x) => x.replace(/[|+]/g, " ").trim()).filter(Boolean).slice(0, 12),
       upsellCategory: $("sUpsell").value.trim() || "Bebidas",
+      cashFloat: Math.max(0, Number($("sFloat").value) || 0),
+      googleReviewUrl: /^https:\/\//.test($("sGoogle").value.trim()) ? $("sGoogle").value.trim() : "",
       uberFee: Math.min(60, Math.max(0, Number($("sUberFee").value) || 0)),
       didiFee: Math.min(60, Math.max(0, Number($("sDidiFee").value) || 0)),
       bank: $("sBank").value.trim(),

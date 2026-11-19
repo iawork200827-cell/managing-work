@@ -58,6 +58,8 @@ const state = {
   joinCode: "",
   tabName: local.get("comanda.name") || "",
   invoiceOpen: false,
+  review: { stars: 0, comment: "" },
+  callOpen: false,
   inv: { rfc: "", razon: "", email: "", cp: "", regimen: "", uso: "G03 - Gastos en general" },
   mySession: tableParam ? local.get("comanda.session." + tableParam) : null
 };
@@ -160,6 +162,7 @@ function takeoutTicket(o) {
     <div class="full">${summaryHtml([o.items], cur(), "Tu pedido", Number(o.discount) || 0)}
       <div class="muted" style="margin-top:6px">${payNote}${o.type === "casa" ? (o.delivery === "domicilio" ? " · A domicilio" : " · Pasas a recoger") : ""}</div></div>
     ${o.status !== "por_pagar" && o.status !== "cancelado" ? `<div class="full">${invoiceHtml(o.id)}</div>` : ""}
+    ${o.status === "entregado" ? `<div class="full">${reviewHtml(o.id)}</div>` : ""}
     ${done ? `<div class="full"><button data-neworder>Hacer otro pedido</button></div>` : ""}
   </div>`;
 }
@@ -173,6 +176,7 @@ function tableHeader() {
   const paidBefore = !!(state.mySession && t && t.closed);
   const paidNote = paidBefore
     ? `<div class="notice">Tu cuenta anterior de esta mesa ya está pagada. ¡Gracias!
+        <div style="margin-top:8px">${reviewHtml(state.mySession)}</div>
         ${state.rounds.length ? `<details style="margin-top:6px"><summary>Ver lo que pagaron</summary>${summaryHtml(state.rounds.filter((r) => r.status !== "cancelado").map((r) => r.items), cur(), "Cuenta pagada")}</details>` : ""}</div>`
     : "";
   return paidNote + (inTab() ? tabTicket(t) : chooseTab());
@@ -237,6 +241,40 @@ async function sendInvoice(ref, kind, total, code) {
   } catch (e) { console.error(e); toast("No se pudo enviar. Revisa los datos e intenta otra vez."); }
 }
 
+// ---------- reseña ----------
+const reviewKey = (ref) => "comanda.resena." + ref;
+function reviewHtml(ref) {
+  const done = local.get(reviewKey(ref));
+  const g = state.config.googleReviewUrl;
+  if (done) return Number(done) >= 4 && g
+    ? `<div class="notice" style="margin:0">¡Gracias! ¿Nos ayudas con una reseña en Google? <a href="${esc(g)}" target="_blank" rel="noopener">Dejar reseña</a></div>`
+    : `<div class="muted">¡Gracias por tu opinión!</div>`;
+  const r = state.review;
+  return `<form id="reviewForm" class="review"><strong>¿Cómo estuvo todo?</strong>
+    <div class="stars" role="radiogroup" aria-label="Calificación">${[1, 2, 3, 4, 5].map((n) => `<button type="button" role="radio" aria-checked="${r.stars === n}" class="${n <= r.stars ? "on" : ""}" data-star="${n}" aria-label="${n} estrellas">★</button>`).join("")}</div>
+    ${r.stars ? `<input id="reviewComment" maxlength="500" placeholder="Cuéntanos algo (opcional)" value="${esc(r.comment)}">
+      <button class="primary" type="submit">Enviar</button>` : ""}</form>`;
+}
+async function sendReview(ref, kind) {
+  const r = state.review;
+  if (!r.stars) return;
+  try {
+    await addDoc(collection(db, "reviews"), { stars: r.stars, comment: r.comment.trim().slice(0, 500), ref: String(ref).slice(0, 40), kind, createdAt: serverTimestamp() });
+    local.set(reviewKey(ref), String(r.stars));
+    state.review = { stars: 0, comment: "" };
+    toast("¡Gracias por tu opinión!");
+    render();
+  } catch (e) { console.error(e); toast("No se pudo enviar. Intenta otra vez."); }
+}
+
+// ---------- llamar al mesero ----------
+const CALL_REASONS = ["Salsas", "Servilletas", "Algo más de tomar", "Otra cosa"];
+function callHtml(t) {
+  if (t.call && t.call.reason) return `<span class="tag">Avisamos al mesero: ${esc(t.call.reason)}</span>`;
+  if (!state.callOpen) return `<button data-callopen>Llamar al mesero</button>`;
+  return `<span class="opts">${CALL_REASONS.map((r) => `<button data-call="${esc(r)}">${esc(r)}</button>`).join("")}</span>`;
+}
+
 function tabTicket(t) {
   const rounds = state.rounds.filter((r) => r.status !== "cancelado").sort((a, b) => a.createdAt - b.createdAt);
   const total = rounds.reduce((s, r) => s + (Number(r.total) || 0), 0);
@@ -261,6 +299,7 @@ function tabTicket(t) {
   }
   html += `<div class="full" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">`;
   if (rounds.length) html += t.billRequested ? `<span class="tag">Ya pediste la cuenta. En un momento te atienden.</span>` : `<button data-bill>Pedir la cuenta</button>`;
+  html += callHtml(t);
   html += `<button data-leavetab>Pedir en una cuenta aparte</button></div>`;
   if (rounds.length) html += `<div class="full">${invoiceHtml(state.mySession)}</div>`;
   return html + `</div>`;
@@ -583,6 +622,14 @@ document.addEventListener("click", (ev) => {
     return;
   }
   if ("neworder" in d) { watchMyOrder(null); return; }
+  if (d.star) { state.review.stars = Number(d.star); render(); return; }
+  if ("callopen" in d) { state.callOpen = true; render(); return; }
+  if (d.call) {
+    state.callOpen = false;
+    updateDoc(doc(db, "tabs", state.mySession), { call: { reason: d.call, at: serverTimestamp() } })
+      .then(() => toast("Listo, ya avisamos al mesero"), () => toast("No se pudo avisar. Levanta la mano 🙂"));
+    return;
+  }
   if ("invoiceopen" in d) { state.invoiceOpen = true; render(); $("invRfc")?.focus(); return; }
   if ("invoiceclose" in d) { state.invoiceOpen = false; render(); return; }
   if ("newtab" in d) {
@@ -611,12 +658,18 @@ document.addEventListener("input", (ev) => {
   if (id === "payRef") state.payRef = ev.target.value;
   if (id === "joinCode") state.joinCode = ev.target.value;
   if (id === "tabName") state.tabName = ev.target.value;
+  if (id === "reviewComment") state.review.comment = ev.target.value;
   const invMap = { invRfc: "rfc", invRazon: "razon", invEmail: "email", invCp: "cp", invRegimen: "regimen", invUso: "uso" };
   if (invMap[id]) state.inv[invMap[id]] = ev.target.value;
 });
 document.addEventListener("submit", (ev) => {
   if (ev.target.id === "casaForm") { ev.preventDefault(); placeOrder(); return; }
   if (ev.target.id === "joinForm") { ev.preventDefault(); joinTable(state.joinCode); return; }
+  if (ev.target.id === "reviewForm") {
+    ev.preventDefault();
+    if (MODE === "mesa") sendReview(state.mySession, "cuenta"); else if (state.myOrder) sendReview(state.myOrder.id, "pedido");
+    return;
+  }
   if (ev.target.id === "invForm") {
     ev.preventDefault();
     if (MODE === "mesa") {

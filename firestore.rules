@@ -203,7 +203,13 @@ service cloud.firestore {
       allow update: if isAdmin()
         // Empleado: cobrar y cerrar la cuenta
         || (isStaff() && request.resource.data.diff(resource.data).affectedKeys()
-              .hasOnly(['closed', 'billRequested', 'total', 'payMethod', 'closedAt', 'closedBy']))
+              .hasOnly(['closed', 'billRequested', 'total', 'payMethod', 'closedAt', 'closedBy', 'tip', 'tipBy', 'call']))
+        // Llamar al mesero (cliente de la cuenta abierta)
+        || (resource.data.closed == false
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['call'])
+            && request.resource.data.call.keys().hasOnly(['reason', 'at'])
+            && request.resource.data.call.reason is string && request.resource.data.call.reason.size() <= 60
+            && request.resource.data.call.at == request.time)
         // Pedir la cuenta
         || (resource.data.closed == false
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['billRequested'])
@@ -276,6 +282,22 @@ service cloud.firestore {
         && request.resource.data.total is number
         && request.resource.data.createdAt == request.time
         && request.resource.data.done == false;
+    }
+
+    // ---------------- Reseñas ----------------
+    match /reviews/{id} {
+      allow read, update, delete: if isAdmin();
+      allow create: if request.resource.data.keys().hasOnly(['stars', 'comment', 'ref', 'kind', 'createdAt'])
+        && request.resource.data.stars is int && request.resource.data.stars >= 1 && request.resource.data.stars <= 5
+        && request.resource.data.comment is string && request.resource.data.comment.size() <= 500
+        && request.resource.data.ref is string && request.resource.data.ref.size() <= 40
+        && request.resource.data.kind in ['pedido', 'cuenta']
+        && request.resource.data.createdAt == request.time;
+    }
+
+    // ---------------- Cortes de caja (solo el dueño) ----------------
+    match /cortes/{id} {
+      allow read, write: if isOwner();
     }
   }
 }

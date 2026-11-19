@@ -3,12 +3,12 @@
 // cobrar y cerrar cuentas, confirmar pagos desde casa y avanzar pedidos en cocina.
 // No ve ventas del día ni pedidos terminados.
 import {
-  collection, doc, onSnapshot, query, where, writeBatch, setDoc, getDoc, serverTimestamp
+  collection, doc, onSnapshot, query, where, writeBatch, setDoc, getDoc, updateDoc, deleteField, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { signInAnonymously, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   db, auth, configured, OWNER_EMAILS, $, esc, money, toMillis, local, toast, notConfiguredHtml,
-  STATUS_LABEL, DEFAULT_CONFIG, prepMinutes, newId, showErrorsOnPage, summaryHtml, isClosed, tableLabel, tableIds, BAR_ID, platesHtml, PLATFORMS
+  STATUS_LABEL, DEFAULT_CONFIG, prepMinutes, newId, showErrorsOnPage, summaryHtml, isClosed, tableLabel, tableIds, BAR_ID, platesHtml, PLATFORMS, tipPickerHtml, tipAmount
 } from "./common.js";
 import { buildItems, isOut as isOutP, totals, productCard, selectionFor, handleSelectClick } from "./cart.js";
 
@@ -30,7 +30,7 @@ const state = {
   view: "mesas", config: { ...DEFAULT_CONFIG }, products: [],
   tabs: {}, rounds: {}, active: [],
   // Pedido que se está capturando
-  target: null, plates: [{}], toGo: [], cur: 0, sel: {}, pick: {}, note: "", customer: "", phone: "", extRef: "", sending: false,
+  target: null, plates: [{}], toGo: [], cur: 0, sel: {}, tips: {}, seenCalls: null, pick: {}, note: "", customer: "", phone: "", extRef: "", sending: false,
   openFor: null, openName: "", unsubs: []
 };
 const cur = () => state.config.currency || "$";
@@ -61,7 +61,9 @@ function renderInner() {
   if (state.target) { app.innerHTML = builderHtml(); renderBar(); return; }
   $("cartbar").hidden = true;
   const pend = state.active.filter((o) => o.status === "pendiente" || o.status === "por_pagar").length;
-  let html = `<div class="tabs">
+  const calling = Object.values(state.tabs).filter((t) => t.call && t.call.reason);
+  let html = calling.length ? `<div class="callbar">${calling.map((t) => `<div class="order"><div class="row"><strong>${esc(tableLabel(t.table))}${t.name ? " · " + esc(t.name) : ""}</strong><span class="tag bill">Llama: ${esc(t.call.reason)}</span><button data-callok="${esc(t.id)}">Atendido</button></div></div>`).join("")}</div>` : "";
+  html += `<div class="tabs">
     <button data-view="mesas" class="${state.view === "mesas" ? "on" : ""}">Mesas</button>
     <button data-view="llevar" class="${state.view === "llevar" ? "on" : ""}">Para llevar · Uber · DiDi</button>
     <button data-view="cocina" class="${state.view === "cocina" ? "on" : ""}">Cocina${pend ? ` (${pend})` : ""}</button></div>`;
@@ -97,7 +99,8 @@ function tablesHtml() {
       html += `<div class="order"><div class="row"><strong>${esc(tab.name || "Cuenta")}</strong><span class="mono muted">${esc(tab.code)}</span>${tab.billRequested ? '<span class="tag bill">Pidió la cuenta</span>' : ""}</div>
         ${rounds.length ? summaryHtml(rounds.map((r) => r.items), cur(), "Lo que han pedido", rounds.reduce((a, r) => a + (Number(r.discount) || 0), 0)) : '<p class="muted" style="margin:0">Sin pedidos todavía</p>'}
         <div class="acts"><button class="primary" data-addto="${esc(tab.id)}">Agregar pedido</button>
-          ${rounds.length ? `<button data-close="${esc(tab.id)}" data-method="efectivo">Cobrar efectivo</button><button data-close="${esc(tab.id)}" data-method="tarjeta">Cobrar tarjeta</button>` : ""}</div></div>`;
+          ${rounds.length ? `<button data-close="${esc(tab.id)}" data-method="efectivo">Cobrar efectivo</button><button data-close="${esc(tab.id)}" data-method="tarjeta">Cobrar tarjeta</button>` : ""}</div>
+        ${rounds.length ? tipPickerHtml(tab.id, tabTotal(tab.id), state.tips[tab.id], cur()) : ""}</div>`;
     }
     if (state.openFor === t) {
       html += `<form class="order" id="openForm"><label class="label" for="openName">Nombre del cliente (opcional)</label>
@@ -277,7 +280,8 @@ function closeTab(tabId, method) {
   const total = rounds.reduce((s, r) => s + (Number(r.total) || 0), 0);
   return write(async () => {
     const b = writeBatch(db);
-    b.update(doc(db, "tabs", tabId), { closed: true, billRequested: false, total, payMethod: method, closedAt: serverTimestamp(), closedBy: state.name.slice(0, 40) });
+    b.update(doc(db, "tabs", tabId), { closed: true, billRequested: false, total, payMethod: method, closedAt: serverTimestamp(), closedBy: state.name.slice(0, 40),
+      tip: tipAmount(total, state.tips[tabId]), tipBy: state.name.slice(0, 40), call: deleteField() });
     for (const r of rounds) {
       const patch = { paid: true, payMethod: method };
       if (r.status !== "entregado") {
@@ -297,6 +301,8 @@ document.addEventListener("click", (ev) => {
   const d = t.dataset;
   const plate = state.plates[state.cur];
   if (d.view) { state.view = d.view; render(); return; }
+  if (d.callok) { write(() => updateDoc(doc(db, "tabs", d.callok), { call: deleteField() })); return; }
+  if (d.tip) { state.tips[d.tip] = { pct: Number(d.pct) }; render(); return; }
   if (d.open) { state.openFor = d.open; state.openName = ""; render(); $("openName")?.focus(); return; }
   if ("cancelopen" in d) { state.openFor = null; render(); return; }
   if (d.addto) { const tab = state.tabs[d.addto]; startOrder({ type: "mesa", table: tab.table, session: tab.id, code: tab.code, name: tab.name }); return; }
@@ -341,6 +347,7 @@ document.addEventListener("input", (ev) => {
   if (id === "custPhone") state.phone = ev.target.value;
   if (id === "extRef") state.extRef = ev.target.value;
   if (id === "openName") state.openName = ev.target.value;
+  if (ev.target.dataset && ev.target.dataset.tipcustom) state.tips[ev.target.dataset.tipcustom] = { custom: ev.target.value };
 });
 document.addEventListener("submit", async (ev) => {
   ev.preventDefault();
@@ -378,6 +385,9 @@ function startListening() {
     state.ok = true; state.checking = false;
     const ids = new Set(s.docs.map((d) => d.id));
     state.tabs = Object.fromEntries(s.docs.map((d) => [d.id, { id: d.id, ...d.data() }]));
+    const calls = Object.values(state.tabs).filter((t) => t.call && t.call.reason).map((t) => t.id + toMillis(t.call.at));
+    if (state.seenCalls && calls.some((c) => !state.seenCalls.has(c))) { toast("Una mesa está llamando al mesero"); try { navigator.vibrate && navigator.vibrate(300); } catch (e) {} }
+    state.seenCalls = new Set(calls);
     // Rondas de cada cuenta abierta (para los totales)
     for (const id of ids) if (!roundUnsubs[id]) {
       roundUnsubs[id] = onSnapshot(collection(db, "tabs", id, "rounds"), (r) => {
