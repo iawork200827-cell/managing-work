@@ -1,11 +1,13 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getFirestore } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { initializeFirestore } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getAuth } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { firebaseConfig, OWNER_EMAILS } from "./firebase-config.js";
 
 export const configured = !String(firebaseConfig.apiKey || "").includes("PEGAR");
 export const app = configured ? initializeApp(firebaseConfig) : null;
-export const db = app ? getFirestore(app) : null;
+// Detecta redes o navegadores (algunos iPhone, datos móviles) que bloquean la conexión en vivo
+// y cambia a un modo compatible.
+export const db = app ? initializeFirestore(app, { experimentalAutoDetectLongPolling: true }) : null;
 export const auth = app ? getAuth(app) : null;
 export { OWNER_EMAILS };
 
@@ -89,4 +91,17 @@ export function notConfiguredHtml() {
   return `<div class="empty"><h2>Falta conectar Firebase</h2>
     <p>Abre <code>public/js/firebase-config.js</code> y pega los datos de tu proyecto de Firebase.
     La guía <code>GUIA.md</code> explica cómo.</p></div>`;
+}
+
+// Muestra en pantalla cualquier error, para poder diagnosticar con una captura.
+export function showErrorsOnPage() {
+  const show = (msg) => {
+    const n = document.getElementById("notice");
+    if (!n) return;
+    n.hidden = false;
+    n.textContent = "Error: " + String(msg).slice(0, 300);
+  };
+  window.addEventListener("error", (e) => show(e.message || e.error));
+  window.addEventListener("unhandledrejection", (e) => show((e.reason && (e.reason.code || e.reason.message)) || e.reason));
+  return show;
 }

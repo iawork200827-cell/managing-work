@@ -7,8 +7,10 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import {
   db, configured, $, esc, money, toMillis, local, toast, notConfiguredHtml,
-  STATUS_LABEL, DEFAULT_CONFIG, prepMinutes, estimate, isClosed, newId
+  STATUS_LABEL, DEFAULT_CONFIG, prepMinutes, estimate, isClosed, newId, showErrorsOnPage
 } from "./common.js";
+
+const showError = showErrorsOnPage();
 
 const MODE = ["mesa", "casa"].includes(document.body.dataset.mode) ? document.body.dataset.mode : "llevar";
 const ORDER_KEY = MODE === "casa" ? "comanda.myOrder.casa" : "comanda.myOrder";
@@ -485,35 +487,37 @@ function start() {
   render();
   if (!configured) return;
   if (MODE === "mesa" && !state.table) return;
-  const timer = setTimeout(() => { if (!state.loaded) notice("El menú tarda en cargar. Revisa tu conexión a internet."); }, 10000);
-  const onErr = (e) => { console.error(e); notice("Se perdió la conexión. Recarga la página."); };
+  const timer = setTimeout(() => { if (!state.loaded) notice("El menú tarda en cargar. Revisa tu conexión a internet. (sin respuesta de la base de datos)"); }, 10000);
+  const onErr = (e) => { console.error(e); notice("No se pudo leer el menú: " + (e && (e.code || e.message) || e) + ". Recarga la página."); };
+  // Si algo falla al dibujar, que se vea el error en lugar de quedarse cargando
+  const safe = (fn) => (...a) => { try { fn(...a); } catch (e) { console.error(e); showError(e && e.message || e); } };
 
-  onSnapshot(doc(db, "config", "shop"), (s) => {
+  onSnapshot(doc(db, "config", "shop"), safe((s) => {
     if (s.exists()) state.config = { ...DEFAULT_CONFIG, ...s.data() };
     cleanCart();
     render();
-  }, onErr);
+  }), onErr);
 
-  onSnapshot(collection(db, "products"), (s) => {
+  onSnapshot(collection(db, "products"), safe((s) => {
     state.products = s.docs.map((d) => ({ id: d.id, ...d.data() }));
     cleanCart();
     state.loaded = true; clearTimeout(timer); notice("");
     render();
-  }, onErr);
+  }), onErr);
 
-  onSnapshot(query(collection(db, "queue"), where("status", "in", ["pendiente", "preparando"])), (s) => {
+  onSnapshot(query(collection(db, "queue"), where("status", "in", ["pendiente", "preparando"])), safe((s) => {
     state.queue = s.docs.map((d) => { const x = d.data({ serverTimestamps: "estimate" }); return { id: d.id, minutes: x.minutes, createdAt: toMillis(x.createdAt) }; });
     render();
-  }, onErr);
+  }), onErr);
 
   if (MODE !== "mesa" && state.myOrderId) watchMyOrder(state.myOrderId);
   if (MODE === "mesa") {
-    onSnapshot(doc(db, "tables", state.table), (s) => {
+    onSnapshot(doc(db, "tables", state.table), safe((s) => {
       state.tableDoc = s.exists() ? s.data() : null;
       const open = state.tableDoc && state.tableDoc.status === "abierta";
       watchRounds(open ? state.tableDoc.session : null);
       render();
-    }, onErr);
+    }), onErr);
   }
 }
 start();
