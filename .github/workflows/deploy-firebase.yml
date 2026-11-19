@@ -34,13 +34,25 @@ jobs:
 
       - name: Publicar en Firebase
         env:
-          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          # Se revisan todos los secretos disponibles y se usa el que sea la llave
+          # de cuenta de servicio del proyecto, sin importar cómo se llame.
+          ALL_SECRETS: ${{ toJSON(secrets) }}
+          PROJECT_ID: tacos-josue
         run: |
-          if [ -z "$FIREBASE_SERVICE_ACCOUNT" ]; then
-            echo "::warning::Falta el secreto FIREBASE_SERVICE_ACCOUNT en GitHub (Settings > Secrets and variables > Actions). No se publicó nada."
+          KEY_NAME=$(printf '%s' "$ALL_SECRETS" | jq -r --arg p "$PROJECT_ID" '
+            to_entries[]
+            | select(.key != "github_token")
+            | select((.value | fromjson? // {}) | (.type == "service_account" and .project_id == $p))
+            | .key' | head -n1)
+          if [ -z "$KEY_NAME" ]; then
+            echo "::warning::No encontré la llave de cuenta de servicio de $PROJECT_ID en los secretos de Actions. No se publicó nada."
+            echo "Secretos visibles para este flujo (solo nombres):"
+            printf '%s' "$ALL_SECRETS" | jq -r 'keys[]'
             exit 0
           fi
-          printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/sa.json"
+          echo "Usando la llave guardada en el secreto: $KEY_NAME"
+          printf '%s' "$ALL_SECRETS" | jq -r --arg k "$KEY_NAME" '.[$k]' > "$RUNNER_TEMP/sa.json"
+          unset ALL_SECRETS
           export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/sa.json"
           npx --yes firebase-tools@13.29.1 deploy --only hosting,firestore:rules --non-interactive --force
           rm -f "$RUNNER_TEMP/sa.json"
