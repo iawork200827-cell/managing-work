@@ -187,10 +187,16 @@ const tableTaken = () => !inTab() && state.tableDoc && state.tableDoc.status ===
 
 function tableHeader() {
   const t = state.tab;
-  if (state.mySession && t && t.closed) {
-    return `<div class="ticket ready"><div class="full"><h2>Cuenta cerrada. ¡Gracias por tu visita!</h2>
-      <p class="muted" style="margin:4px 0 0">Si quieren pedir algo más, escaneen otra vez el QR de la mesa.</p></div></div>`;
-  }
+  // La cuenta anterior de este celular ya se pagó: avisamos, pero puede unirse a la nueva o abrir otra
+  const paidBefore = !!(state.mySession && t && t.closed);
+  const paidNote = paidBefore
+    ? `<div class="notice">Tu cuenta anterior de esta mesa ya está pagada. ¡Gracias! ${tableTaken() ? "Si alguien de tu mesa ya abrió otra cuenta, escribe su código abajo." : state.tableKey ? "Si quieren pedir algo más, agréguenlo y se abre una cuenta nueva." : "Para pedir otra vez, escanea el QR de la mesa."}
+        ${state.rounds.length ? `<details style="margin-top:6px"><summary>Ver lo que pagaron</summary>${summaryHtml(state.rounds.filter((r) => r.status !== "cancelado").map((r) => r.items), cur(), "Cuenta pagada")}</details>` : ""}</div>`
+    : "";
+  return paidNote + tableHeaderBody(t);
+}
+
+function tableHeaderBody(t) {
   if (tableTaken()) {
     return `<form class="ticket" id="joinForm"><div class="full"><h2>Esta mesa ya tiene una cuenta abierta</h2>
       <p class="muted" style="margin:4px 0 8px">Para pedir a la misma cuenta, escribe el <strong>código de mesa</strong> que aparece en el celular de alguien de tu mesa.</p>
