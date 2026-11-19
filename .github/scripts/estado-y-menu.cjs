@@ -47,6 +47,28 @@ const db = admin.firestore();
   const keys = await db.collection("tableKeys").count().get();
   console.log(`Claves de QR de mesas creadas: ${keys.data().count}`);
 
+  // Resumen de mesas (sin datos de clientes): estado, sesión abreviada y rondas
+  const allTables = await db.collection("tables").get();
+  for (const t of allTables.docs) {
+    const d = t.data();
+    const sec = await db.doc("tableSecrets/" + t.id).get();
+    const sess = sec.exists ? sec.data().session : null;
+    let rounds = 0;
+    let tabInfo = "sin cuenta";
+    if (sess) {
+      const tab = await db.doc("tabs/" + sess).get();
+      rounds = (await db.collection("tabs/" + sess + "/rounds").count().get()).data().count;
+      tabInfo = tab.exists ? "cuenta " + (tab.data().closed ? "cerrada" : "abierta") + ", código " + tab.data().code : "cuenta no encontrada";
+    }
+    const legacy = "session" in d ? " (campo viejo)" : "";
+    console.log("Mesa " + t.id + ": " + d.status + legacy + " · sesión " + (sess ? sess.slice(0, 4) + "…" : "ninguna") + " · " + tabInfo + " · rondas: " + rounds);
+  }
+  const since = new Date(Date.now() - 6 * 3600e3);
+  const recent = await db.collection("orders").where("createdAt", ">=", since).get();
+  const mesaOrders = recent.docs.map((x) => x.data()).filter((o) => o.type === "mesa");
+  console.log("Rondas de mesa en las últimas 6 h: " + mesaOrders.length);
+  mesaOrders.forEach((o) => console.log("  - mesa " + o.table + " · sesión " + String(o.session || "").slice(0, 4) + "… · " + o.status + " · total " + o.total));
+
   if (products.size === 0) {
     const menu = JSON.parse(fs.readFileSync(path.join(__dirname, "menu-tacos-josue.json"), "utf8"));
     const batch = db.batch();
