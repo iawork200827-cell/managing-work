@@ -164,3 +164,4 @@ input[type="checkbox"] { width: auto }
 .bankrow button { font-size: .78rem; padding: 4px 10px }
 .payform { display: flex; flex-direction: column; gap: 8px; margin-top: 12px }
 .tag.casa { background: var(--accent-soft); color: var(--accent) }
+.dl { display: inline-block; font-weight: 600; padding: 8px 14px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); text-decoration: none }

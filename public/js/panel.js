@@ -351,10 +351,47 @@ function qrHtml() {
       : `<div class="qrcard"><strong>Mesa ${i}</strong><span>Generando código…</span></div>`;
   }
   return `<div class="no-print" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
-      <button class="primary" id="printBtn">Imprimir códigos</button>
+      <button class="primary" id="sheetBtn">Descargar códigos (imagen)</button>
+      <button id="printBtn">Imprimir</button>
       <button id="rotateKeys">Cambiar códigos de las mesas</button>
       <span class="muted">Cada QR de mesa tiene una clave: solo quien lo escanea en la mesa puede abrir la cuenta. Si cambias los códigos, hay que imprimir los nuevos.</span></div>
+    <div id="sheetOut" class="no-print"></div>
     <div class="qrgrid">${cards}</div>`;
+}
+
+// Arma una hoja (tamaño carta/A4) con todos los QR en una imagen que se puede guardar e imprimir
+function buildSheet() {
+  const cards = [...document.querySelectorAll(".qrcard")].filter((c) => c.querySelector(".qr canvas, .qr img"));
+  if (!cards.length) { toast("Espera a que aparezcan los códigos"); return; }
+  const W = 1240, cols = 2, cw = 560, ch = 660, gap = 40, top = 120;
+  const rows = Math.ceil(cards.length / cols);
+  const H = Math.max(1754, top + rows * (ch + gap) + 40);
+  const cv = document.createElement("canvas"); cv.width = W; cv.height = H;
+  const g = cv.getContext("2d");
+  g.fillStyle = "#ffffff"; g.fillRect(0, 0, W, H);
+  g.fillStyle = "#111111"; g.textAlign = "center";
+  g.font = "bold 48px system-ui, -apple-system, sans-serif";
+  g.fillText(state.config.name || "Tacos Josué", W / 2, 80);
+  cards.forEach((card, i) => {
+    const x = 40 + (i % cols) * (cw + gap), y = top + Math.floor(i / cols) * (ch + gap);
+    g.strokeStyle = "#999999"; g.lineWidth = 2; g.setLineDash([12, 10]); g.strokeRect(x, y, cw, ch); g.setLineDash([]);
+    const src = card.querySelector(".qr canvas") || card.querySelector(".qr img");
+    const size = 440;
+    g.imageSmoothingEnabled = false;
+    g.drawImage(src, x + (cw - size) / 2, y + 40, size, size);
+    g.fillStyle = "#111111";
+    g.font = "bold 44px system-ui, -apple-system, sans-serif";
+    g.fillText(card.querySelector("strong")?.textContent || "", x + cw / 2, y + size + 105);
+    g.font = "28px system-ui, -apple-system, sans-serif"; g.fillStyle = "#444444";
+    g.fillText(card.querySelector("span")?.textContent || "", x + cw / 2, y + size + 150);
+  });
+  const url = cv.toDataURL("image/png");
+  const out = document.getElementById("sheetOut");
+  out.innerHTML = `<div class="meatbox"><h3>Tus códigos QR</h3>
+    <p class="muted" style="margin:4px 0 10px">En iPhone o Android: <strong>mantén presionada la imagen → Guardar en Fotos</strong>. Desde Fotos puedes imprimirla o mandarla a una papelería. En computadora, usa el botón Descargar.</p>
+    <a class="dl" href="${url}" download="codigos-qr-tacos-josue.png">Descargar imagen</a>
+    <img src="${url}" alt="Hoja con los códigos QR" style="display:block;width:100%;max-width:620px;margin-top:10px;border:1px solid var(--line);border-radius:8px"></div>`;
+  out.scrollIntoView({ behavior: "smooth" });
 }
 
 // Crea la clave secreta de cada mesa que todavía no tenga
@@ -521,7 +558,8 @@ document.addEventListener("click", (ev) => {
     }, "Menú cargado");
     return;
   }
-  if (t.id === "printBtn") { window.print(); return; }
+  if (t.id === "printBtn") { try { window.print(); } catch (e) {} setTimeout(() => toast("Si no se abrió la impresión, usa \"Descargar códigos (imagen)\""), 800); return; }
+  if (t.id === "sheetBtn") { buildSheet(); return; }
   if (t.id === "logoutBtn") { signOut(auth); return; }
   if (t.id === "soundBtn") {
     try { audio = audio || new (window.AudioContext || window.webkitAudioContext)(); audio.resume(); state.soundOn = true; beep(); toast("Sonido activado"); }
