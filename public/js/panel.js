@@ -319,6 +319,7 @@ function productsHtml() {
   const outOpts = new Set((state.config.outOptions || []).map((o) => String(o).toLowerCase()));
   html += `<div class="meatbox"><h3>Carnes</h3><p class="muted" style="margin:2px 0 8px">Toca una carne para marcarla como agotada en todo el menú. Con <strong>Arrachera</strong> se bloquean de un jalón todos los productos de arrachera.</p>
     <div class="opts">${allOpts.map((o) => { const off = outOpts.has(o.toLowerCase()); return `<button class="toggle ${off ? "off" : "on"}" data-meat="${esc(o)}" aria-pressed="${off}">${esc(o)}${off ? " · agotada" : ""}</button>`; }).join("")}</div>
+    ${(outOpts.size || state.products.some((p) => p.available === false)) ? `<button style="margin-top:10px" class="primary" data-allon>Marcar todo como disponible</button>` : ""}
     ${state.products.some((p) => WITH_MEATS.includes(p.name) && !(p.options || []).length) ? `<button style="margin-top:10px" data-addmeats>Agregar carnes a tacos, burritos, quesadillas, gringas y tortas</button>` : ""}</div>`;
   html += `<div class="no-print" style="margin:0 0 10px"><button data-sample data-replace>Reemplazar todo con el menú de Tacos Josué</button></div>`;
   html += `<p class="muted" style="margin:0 0 10px">${state.products.length} productos · ${out} agotados. Toca <strong>Disponible / Agotado</strong> para bloquear un producto al instante.</p><div class="plist">`;
@@ -685,6 +686,16 @@ document.addEventListener("click", (ev) => {
     const nowOut = cur.length === (state.config.outOptions || []).length;
     write(() => setDoc(doc(db, "config", "shop"), { ...state.config, outOptions: nowOut ? [...cur, d.meat] : cur }),
       nowOut ? `${d.meat}: agotada` : `${d.meat}: disponible`);
+    return;
+  }
+  if ("allon" in d) {
+    if (!t.dataset.confirm) { t.dataset.confirm = "1"; t.textContent = "¿Todo disponible? Toca otra vez"; return; }
+    write(async () => {
+      const b = writeBatch(db);
+      b.set(doc(db, "config", "shop"), { ...state.config, outOptions: [] });
+      state.products.filter((p) => p.available === false).forEach((p) => b.update(doc(db, "products", p.id), { available: true }));
+      await b.commit();
+    }, "Todo el menú está disponible otra vez");
     return;
   }
   if ("addmeats" in d) {
