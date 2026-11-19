@@ -249,9 +249,10 @@ function productsHtml() {
   </form>`;
   if (!state.products.length) {
     return html + `<div class="empty"><p>Todavía no tienes productos. Agrégalos con el formulario de arriba.</p>
-      <button data-sample>Cargar menú de ejemplo</button></div>`;
+      <button class="primary" data-sample>Cargar menú de Tacos Josué</button></div>`;
   }
   const out = state.products.filter((p) => p.available === false).length;
+  html += `<div class="no-print" style="margin:0 0 10px"><button data-sample data-replace>Reemplazar todo con el menú de Tacos Josué</button></div>`;
   html += `<p class="muted" style="margin:0 0 10px">${state.products.length} productos · ${out} agotados. Toca <strong>Disponible / Agotado</strong> para bloquear un producto al instante.</p><div class="plist">`;
   const sorted = [...state.products].sort((a, b) => (a.category || "").localeCompare(b.category || "") || (a.order ?? 0) - (b.order ?? 0));
   for (const p of sorted) {
@@ -341,9 +342,15 @@ function closeTable(tableId, method) {
   }, `Mesa ${tableId} cobrada y cerrada`);
 }
 
+// Menú de Tacos Josué (tomado de su punto de venta). Se carga con un botón en Productos.
 const SAMPLE = [
-  ["Taco de pastor", 22, "Tacos"], ["Taco de asada", 25, "Tacos"], ["Orden de pastor (5)", 100, "Platillos"],
-  ["Gringa", 65, "Platillos"], ["Agua de horchata", 35, "Bebidas"], ["Refresco", 30, "Bebidas"]
+  ["Tacos", 17, "Tacos"], ["Taco de arrachera", 18, "Tacos"],
+  ["Burritos", 20, "Burritos"], ["Burrito de arrachera", 25, "Burritos"],
+  ["Quesadilla", 40, "Gringas y quesadillas"], ["Quesadilla de arrachera", 45, "Gringas y quesadillas"],
+  ["Gringa", 50, "Gringas y quesadillas"], ["Gringa de arrachera", 55, "Gringas y quesadillas"],
+  ["Tortas", 45, "Tortas"], ["Torta de arrachera", 50, "Tortas"],
+  ["1 kg de arrachera", 320, "Por kilo"], ["1 kg de barbacoa", 300, "Por kilo"], ["1 kg de sazón", 260, "Por kilo"],
+  ["Refresco y agua", 25, "Bebidas"], ["Agua de litro", 40, "Bebidas"], ["Refresco 1½ litros", 55, "Bebidas"]
 ];
 
 // ---------- eventos ----------
@@ -380,11 +387,13 @@ document.addEventListener("click", (ev) => {
     write(() => deleteDoc(doc(db, "products", d.del)), "Producto borrado"); return;
   }
   if ("sample" in d) {
+    if ("replace" in d && !t.dataset.confirm) { t.dataset.confirm = "1"; t.textContent = "Se borran los productos actuales. ¿Seguro? Toca otra vez"; return; }
     write(async () => {
       const b = writeBatch(db);
-      SAMPLE.forEach(([name, price, category], i) => b.set(doc(collection(db, "products")), { name, price, category, description: "Ejemplo", available: true, order: i }));
+      if ("replace" in d) state.products.forEach((p) => b.delete(doc(db, "products", p.id)));
+      SAMPLE.forEach(([name, price, category], i) => b.set(doc(collection(db, "products")), { name, price, category, description: "", available: true, order: i }));
       await b.commit();
-    }, "Menú de ejemplo cargado");
+    }, "Menú cargado");
     return;
   }
   if (t.id === "printBtn") { window.print(); return; }
