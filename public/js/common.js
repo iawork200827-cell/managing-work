@@ -105,3 +105,25 @@ export function showErrorsOnPage() {
   window.addEventListener("unhandledrejection", (e) => show((e.reason && (e.reason.code || e.reason.message)) || e.reason));
   return show;
 }
+
+// Junta los productos de uno o varios pedidos: "6 × Tacos de pastor  $102"
+export function summarize(itemLists) {
+  const map = new Map();
+  for (const items of itemLists) for (const i of items || []) {
+    const key = i.name + "|" + i.price;
+    const cur = map.get(key) || { name: i.name, price: Number(i.price) || 0, qty: 0 };
+    cur.qty += Number(i.qty) || 0;
+    map.set(key, cur);
+  }
+  return [...map.values()].sort((a, b) => a.name.localeCompare(b.name, "es"));
+}
+
+export function summaryHtml(itemLists, currency = "$", title = "Resumen de lo que pidieron") {
+  const rows = summarize(itemLists);
+  if (!rows.length) return "";
+  const total = rows.reduce((s, r) => s + r.qty * r.price, 0);
+  const pieces = rows.reduce((s, r) => s + r.qty, 0);
+  return `<div class="summary"><div class="label">${esc(title)}</div>
+    <table><tbody>${rows.map((r) => `<tr><td class="mono q">${r.qty} ×</td><td>${esc(r.name)}</td><td class="mono r">${money(r.qty * r.price, currency)}</td></tr>`).join("")}</tbody>
+    <tfoot><tr><td class="mono q">${pieces}</td><td>${pieces === 1 ? "pieza" : "piezas"} en total</td><td class="mono r">${money(total, currency)}</td></tr></tfoot></table></div>`;
+}

@@ -9,7 +9,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   db, auth, configured, OWNER_EMAILS, $, esc, money, toMillis, toast, notConfiguredHtml,
-  STATUS_LABEL, DEFAULT_CONFIG, isClosed, endOfToday, prepMinutes, newId
+  STATUS_LABEL, DEFAULT_CONFIG, isClosed, endOfToday, prepMinutes, newId, summaryHtml
 } from "./common.js";
 
 const state = {
@@ -276,7 +276,8 @@ function tablesHtml() {
     const tab = tabOf(t);
     html += `<div class="order"><div class="row"><h3>Mesa ${esc(t.id)}</h3>${tab.billRequested ? '<span class="tag bill">Pidió la cuenta</span>' : ""}${tab.code ? `<span class="muted mono">código ${esc(tab.code)}</span>` : ""}</div>
       <div class="row"><span class="muted">Abierta ${t.openedAt ? fmtTime(toMillis(t.openedAt)) : ""} · ${rounds.length} ${rounds.length === 1 ? "ronda" : "rondas"}${pending ? ` · ${pending} en cocina` : ""}</span><span class="price">${money(total, cur())}</span></div>
-      <details><summary class="muted">Ver cuenta</summary>${rounds.map((r, i) => `<div class="round"><div class="row"><strong>Ronda ${i + 1}</strong><span class="muted">${STATUS_LABEL[r.status]}</span><span class="price">${money(r.total, cur())}</span></div>${itemsByPlate(r.items)}</div>`).join("")}</details>
+      ${summaryHtml(rounds.map((r) => r.items), cur(), "Resumen de la cuenta")}
+      <details><summary class="muted">Ver por ronda</summary>${rounds.map((r, i) => `<div class="round"><div class="row"><strong>Ronda ${i + 1}</strong><span class="muted">${STATUS_LABEL[r.status]}</span><span class="price">${money(r.total, cur())}</span></div>${itemsByPlate(r.items)}</div>`).join("")}</details>
       <div class="acts"><button class="primary" data-close="${esc(t.id)}" data-method="efectivo">Cobrado en efectivo</button>
         <button data-close="${esc(t.id)}" data-method="tarjeta">Cobrado con tarjeta</button></div></div>`;
   }

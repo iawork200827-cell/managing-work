@@ -7,7 +7,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import {
   db, configured, $, esc, money, toMillis, local, toast, notConfiguredHtml,
-  STATUS_LABEL, DEFAULT_CONFIG, prepMinutes, estimate, isClosed, newId, showErrorsOnPage
+  STATUS_LABEL, DEFAULT_CONFIG, prepMinutes, estimate, isClosed, newId, showErrorsOnPage, summaryHtml
 } from "./common.js";
 
 const showError = showErrorsOnPage();
@@ -174,9 +174,8 @@ function takeoutTicket(o) {
     <div><div class="label">Tu pedido</div><div class="big">#${esc(o.code)}</div><div class="muted">${esc(o.customer)}</div></div>
     ${main}
     ${o.status === "por_pagar" ? "" : `<div class="full">${statusSteps(o.status)}</div>`}
-    <div class="full"><details><summary class="muted">Ver mi pedido</summary>${itemsByPlate(o.items)}
-      <div class="price">Total: ${money(o.total, cur())}</div>
-      <div class="muted">${payNote}${o.type === "casa" ? (o.delivery === "domicilio" ? " · A domicilio" : " · Pasas a recoger") : ""}</div></details></div>
+    <div class="full">${summaryHtml([o.items], cur(), "Tu pedido")}
+      <div class="muted" style="margin-top:6px">${payNote}${o.type === "casa" ? (o.delivery === "domicilio" ? " · A domicilio" : " · Pasas a recoger") : ""}</div></div>
     ${done ? `<div class="full"><button data-neworder>Hacer otro pedido</button></div>` : ""}
   </div>`;
 }
@@ -217,7 +216,8 @@ function tableHeader() {
     html += `<div><div class="label">Estado</div><h2>¡Ya va para tu mesa!</h2></div>`;
   }
   if (rounds.length) {
-    html += `<div class="full"><details><summary class="muted">Ver la cuenta</summary>`;
+    html += `<div class="full">${summaryHtml(rounds.map((r) => r.items), cur(), "Resumen de lo que ha pedido la mesa")}</div>`;
+    html += `<div class="full"><details><summary class="muted">Ver por ronda</summary>`;
     rounds.forEach((r, i) => {
       html += `<div class="round"><div class="row"><strong>Ronda ${i + 1}</strong><span class="tag">${STATUS_LABEL[r.status] || r.status}</span><span class="price">${money(r.total, cur())}</span></div>${itemsByPlate(r.items)}</div>`;
     });

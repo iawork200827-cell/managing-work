@@ -165,3 +165,12 @@ input[type="checkbox"] { width: auto }
 .payform { display: flex; flex-direction: column; gap: 8px; margin-top: 12px }
 .tag.casa { background: var(--accent-soft); color: var(--accent) }
 .dl { display: inline-block; font-weight: 600; padding: 8px 14px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); text-decoration: none }
+
+/* Resumen de lo que pidieron */
+.summary { background: var(--bg); border-radius: 10px; padding: 10px 12px; margin-top: 4px }
+.summary table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: .92rem }
+.summary td { padding: 4px 0; vertical-align: top }
+.summary td.q { width: 3.2em; color: var(--muted); white-space: nowrap }
+.summary td.r { text-align: right; white-space: nowrap; padding-left: 10px }
+.summary tfoot td { border-top: 1px solid var(--line); padding-top: 8px; font-weight: 700 }
+.order .summary { background: var(--bg) }
