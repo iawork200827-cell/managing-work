@@ -3,12 +3,12 @@
 // cobrar y cerrar cuentas, confirmar pagos desde casa y avanzar pedidos en cocina.
 // No ve ventas del día ni pedidos terminados.
 import {
-  collection, doc, onSnapshot, query, where, writeBatch, setDoc, getDoc, updateDoc, deleteField, serverTimestamp
+  collection, doc, onSnapshot, query, where, writeBatch, setDoc, getDoc, updateDoc, deleteField, increment, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { signInAnonymously, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   db, auth, configured, OWNER_EMAILS, $, esc, money, toMillis, local, toast, notConfiguredHtml,
-  STATUS_LABEL, DEFAULT_CONFIG, prepMinutes, newId, showErrorsOnPage, summaryHtml, isClosed, tableLabel, tableIds, BAR_ID, platesHtml, PLATFORMS, tipPickerHtml, tipAmount
+  STATUS_LABEL, DEFAULT_CONFIG, prepMinutes, newId, showErrorsOnPage, summaryHtml, isClosed, tableLabel, tableIds, BAR_ID, platesHtml, PLATFORMS, tipPickerHtml, tipAmount, normPhone
 } from "./common.js";
 import { buildItems, isOut as isOutP, totals, productCard, selectionFor, handleSelectClick } from "./cart.js";
 
@@ -66,11 +66,13 @@ function renderInner() {
   html += `<div class="tabs">
     <button data-view="mesas" class="${state.view === "mesas" ? "on" : ""}">Mesas</button>
     <button data-view="llevar" class="${state.view === "llevar" ? "on" : ""}">Para llevar · Uber · DiDi</button>
-    <button data-view="cocina" class="${state.view === "cocina" ? "on" : ""}">Cocina${pend ? ` (${pend})` : ""}</button></div>`;
+    <button data-view="cocina" class="${state.view === "cocina" ? "on" : ""}">Cocina${pend ? ` (${pend})` : ""}</button>
+    <button data-view="reparto" class="${state.view === "reparto" ? "on" : ""}">Domicilios${deliveries().length ? ` (${deliveries().length})` : ""}</button></div>`;
   if (isClosed(state.config)) html += `<div class="notice">Los pedidos están cerrados por hoy.</div>`;
   if (state.view === "mesas") html += tablesHtml();
   if (state.view === "llevar") html += takeoutHtml();
   if (state.view === "cocina") html += kitchenHtml();
+  if (state.view === "reparto") html += deliveryHtml();
   app.innerHTML = html;
 }
 
@@ -124,6 +126,24 @@ function takeoutHtml() {
   return html + "</div>";
 }
 
+// ---------- repartidor ----------
+const deliveries = () => state.active.filter((o) => o.type === "casa" && o.delivery === "domicilio" && o.status !== "por_pagar").sort((a, b) => a.createdAt - b.createdAt);
+function deliveryHtml() {
+  const list = deliveries();
+  if (!list.length) return '<div class="empty">No hay pedidos a domicilio en curso.</div>';
+  return '<div class="board">' + list.map((o) => {
+    const maps = "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(o.address + (o.zone ? ", " + o.zone : ""));
+    return `<div class="order ${o.status === "listo" ? "new" : ""}"><div class="row"><span class="mono" style="font-weight:700">#${esc(o.code)}</span><span class="tag">${STATUS_LABEL[o.status]}</span></div>
+      <div><strong>${esc(o.customer)}</strong>${o.scheduledFor ? ` <span class="tag pop">Para las ${esc(o.scheduledFor)}</span>` : ""}</div>
+      <div>${esc(o.address)}${o.zone ? ` · <strong>${esc(o.zone)}</strong>` : ""}</div>
+      <div class="acts"><a class="switch-link" href="${esc(maps)}" target="_blank" rel="noopener">Abrir en el mapa</a>
+        <span class="mono">Tel. ${esc(o.phone)}</span></div>
+      ${itemsByPlate(o.items)}
+      <div class="row"><span class="muted">${o.paid ? "Ya pagó (transferencia)" : "Cobrar al entregar"}</span><span class="price">${money(o.total, cur())}</span></div>
+      ${o.status === "listo" ? `<div class="acts"><button class="primary" data-advance="${esc(o.id)}" data-to="entregado">Entregado</button></div>` : '<p class="muted" style="margin:0">Todavía en cocina</p>'}</div>`;
+  }).join("") + "</div>";
+}
+
 function itemsByPlate(items) { return platesHtml(items); }
 
 function kitchenHtml() {
@@ -151,7 +171,7 @@ function kitchenHtml() {
       const [to, label] = NEXT[s](o);
       const el = Math.max(0, Math.round((Date.now() - o.createdAt) / 60000));
       html += `<div class="order"><div class="row"><span class="mono" style="font-weight:700">#${esc(o.code)}</span><span class="mono ${el > (o.minutes || 5) && s !== "listo" ? "late" : "muted"}">${el} de ~${o.minutes || "?"} min</span></div>
-        <div>${who(o)}</div>${itemsByPlate(o.items)}${o.note ? `<div class="notice" style="margin:0">Nota: ${esc(o.note)}</div>` : ""}
+        <div>${who(o)}${o.scheduledFor ? ` <span class="tag pop">Para las ${esc(o.scheduledFor)}</span>` : ""}</div>${itemsByPlate(o.items)}${o.note ? `<div class="notice" style="margin:0">Nota: ${esc(o.note)}</div>` : ""}
         ${o.takenBy ? `<div class="muted" style="font-size:.8rem">Tomó: ${esc(o.takenBy)}</div>` : ""}
         <div class="acts"><button class="primary" data-advance="${esc(o.id)}" data-to="${to}">${label}</button>
           ${s !== "listo" ? `<button class="danger" data-cancel="${esc(o.id)}">Cancelar</button>` : ""}</div></div>`;
@@ -196,6 +216,13 @@ function renderBar() {
     <input id="custNote" placeholder="Nota para cocina" maxlength="200" value="${esc(state.note)}">
     <button class="primary" id="sendOrder" ${state.sending ? "disabled" : ""}>Enviar a cocina</button></div>`;
   if (active && $(active)) $(active).focus();
+}
+
+// Suma una visita a la tarjeta de lealtad del cliente
+function loyaltyBump(b, phone) {
+  const p = normPhone(phone);
+  if (!(state.config.loyalty && state.config.loyalty.on) || !p) return;
+  b.set(doc(db, "loyalty", p), { count: increment(1), updatedAt: serverTimestamp() }, { merge: true });
 }
 
 // ---------- escrituras ----------
@@ -266,6 +293,7 @@ function setStatus(o, status) {
     if (status !== "cancelado") patch[status + "At"] = serverTimestamp(); else patch.cancelledBy = state.name.slice(0, 40);
     if (status === "entregado" && o.type === "llevar") { patch.paid = true; patch.payMethod = "efectivo"; }
     if (status === "entregado" && o.type === "plataforma") { patch.paid = true; patch.payMethod = o.platform; }
+    if (status === "entregado" && (o.type === "llevar" || o.type === "casa")) loyaltyBump(b, o.phone);
     b.update(doc(db, "orders", o.id), patch);
     if (o.type === "mesa" && o.session) b.set(doc(db, "tabs", o.session, "rounds", o.id), { status }, { merge: true });
     if (status === "entregado" || status === "cancelado") b.delete(doc(db, "queue", o.id));
@@ -282,6 +310,7 @@ function closeTab(tabId, method) {
     const b = writeBatch(db);
     b.update(doc(db, "tabs", tabId), { closed: true, billRequested: false, total, payMethod: method, closedAt: serverTimestamp(), closedBy: state.name.slice(0, 40),
       tip: tipAmount(total, state.tips[tabId]), tipBy: state.name.slice(0, 40), call: deleteField() });
+    if (tab.phone && rounds.length) loyaltyBump(b, tab.phone);
     for (const r of rounds) {
       const patch = { paid: true, payMethod: method };
       if (r.status !== "entregado") {

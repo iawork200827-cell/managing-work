@@ -58,7 +58,10 @@ service cloud.firestore {
       let d = request.resource.data;
       return d.keys().hasOnly(['type', 'customer', 'phone', 'delivery', 'address', 'table', 'session', 'note',
                                'items', 'plates', 'total', 'minutes', 'status', 'createdAt', 'code', 'paid', 'takenBy',
-                               'platform', 'extRef', 'discount', 'promos'])
+                               'platform', 'extRef', 'discount', 'promos', 'zone', 'deliveryFee', 'scheduledFor'])
+        && (!('zone' in d) || (d.zone is string && d.zone.size() <= 60))
+        && (!('deliveryFee' in d) || (d.deliveryFee is number && d.deliveryFee >= 0 && d.deliveryFee <= 1000))
+        && (!('scheduledFor' in d) || (d.scheduledFor is string && d.scheduledFor.matches('^[0-2][0-9]:[0-5][0-9]$')))
         && (!('discount' in d) || (d.discount is number && d.discount >= 0))
         && (!('promos' in d) || (d.promos is list && d.promos.size() <= 10))
         && (!('takenBy' in d) || (d.takenBy is string && d.takenBy.size() <= 40 && isTeam()))
@@ -190,7 +193,8 @@ service cloud.firestore {
     match /tabs/{session} {
       allow get: if true;
       allow list: if isTeam();
-      allow create: if request.resource.data.keys().hasOnly(['table', 'openedAt', 'code', 'closed', 'billRequested', 'name', 'openedBy'])
+      allow create: if request.resource.data.keys().hasOnly(['table', 'openedAt', 'code', 'closed', 'billRequested', 'name', 'openedBy', 'phone'])
+        && (!('phone' in request.resource.data) || (request.resource.data.phone is string && request.resource.data.phone.size() <= 20))
         && (!('name' in request.resource.data) || (request.resource.data.name is string && request.resource.data.name.size() <= 40))
         && (!('openedBy' in request.resource.data) || (request.resource.data.openedBy is string && request.resource.data.openedBy.size() <= 40))
         && request.resource.data.table is string
@@ -298,6 +302,14 @@ service cloud.firestore {
     // ---------------- Cortes de caja (solo el dueño) ----------------
     match /cortes/{id} {
       allow read, write: if isOwner();
+    }
+
+    // ---------------- Lealtad (por teléfono) ----------------
+    // El cliente ve su avance si conoce su número; solo el equipo suma o canjea visitas.
+    match /loyalty/{phone} {
+      allow get: if phone.matches('^[0-9]{10}$');
+      allow list: if isAdmin();
+      allow write: if isTeam() && phone.matches('^[0-9]{10}$');
     }
   }
 }

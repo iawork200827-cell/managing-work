@@ -1,7 +1,7 @@
 // Panel del administrador: pedidos y tiempos, mesas (cuentas abiertas), productos, ajustes, QR
 // y botón para cerrar los pedidos del día.
 import {
-  collection, doc, onSnapshot, query, where, orderBy, writeBatch, updateDoc, addDoc, deleteDoc, setDoc, getDoc, getDocs, deleteField, limit,
+  collection, doc, onSnapshot, query, where, orderBy, writeBatch, updateDoc, addDoc, deleteDoc, setDoc, getDoc, getDocs, deleteField, limit, increment,
   serverTimestamp, Timestamp
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import {
@@ -9,7 +9,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   db, auth, configured, OWNER_EMAILS, $, esc, money, toMillis, toast, notConfiguredHtml,
-  STATUS_LABEL, DEFAULT_CONFIG, isClosed, endOfToday, prepMinutes, newId, summaryHtml, tableLabel, tableIds, BAR_ID, platesHtml, PLATFORMS, tipPickerHtml, tipAmount
+  STATUS_LABEL, DEFAULT_CONFIG, isClosed, endOfToday, prepMinutes, newId, summaryHtml, tableLabel, tableIds, BAR_ID, platesHtml, PLATFORMS, tipPickerHtml, tipAmount, normPhone, DAY_NAMES
 } from "./common.js";
 
 const state = {
@@ -197,8 +197,32 @@ function whoLabel(o) {
 }
 
 function casaInfo(o) {
-  if (o.type !== "casa") return "";
-  return `<div class="muted" style="font-size:.88rem">Tel. <span class="mono">${esc(o.phone)}</span>${o.delivery === "domicilio" ? `<br>${esc(o.address)}` : ""}</div>`;
+  const sched = o.scheduledFor ? `<span class="tag pop">Para las ${esc(o.scheduledFor)}</span> ` : "";
+  const loy = loyaltyBadge(o.phone);
+  if (o.type !== "casa") return sched || loy ? `<div>${sched}${loy}</div>` : "";
+  return `<div class="muted" style="font-size:.88rem">${sched}Tel. <span class="mono">${esc(o.phone)}</span>${o.delivery === "domicilio" ? `<br>${esc(o.address)}${o.zone ? ` · <strong>${esc(o.zone)}</strong>` : ""}${o.deliveryFee ? ` · envío ${money(o.deliveryFee, cur())}` : ""}` : ""} ${loy}</div>`;
+}
+
+// ---------- lealtad ----------
+const loyOn = () => !!(state.config.loyalty && state.config.loyalty.on);
+const loyEvery = () => Math.max(2, Number(state.config.loyalty && state.config.loyalty.every) || 10);
+function loyaltyBadge(phone) {
+  const p = normPhone(phone);
+  if (!loyOn() || !p) return "";
+  state.loy ||= {};
+  if (!(p in state.loy)) { state.loy[p] = null; getDoc(doc(db, "loyalty", p)).then((s) => { state.loy[p] = s.exists() ? s.data() : { count: 0 }; render(); }).catch(() => {}); }
+  const l = state.loy[p]; if (!l) return "";
+  const n = Number(l.count) || 0;
+  return n >= loyEvery()
+    ? `<span class="tag pop">Tiene premio (${n} visitas)</span> <button data-redeem="${p}">Canjear premio</button>`
+    : `<span class="tag">Lealtad ${n}/${loyEvery()}</span>`;
+}
+// Suma una visita a la tarjeta de lealtad del cliente (dentro del mismo batch del cobro/entrega)
+function loyaltyBump(b, phone) {
+  const p = normPhone(phone);
+  if (!loyOn() || !p) return;
+  b.set(doc(db, "loyalty", p), { count: increment(1), updatedAt: serverTimestamp() }, { merge: true });
+  if (state.loy && state.loy[p]) state.loy[p] = { ...state.loy[p], count: (Number(state.loy[p].count) || 0) + 1 };
 }
 
 function payQueueHtml() {
@@ -300,6 +324,7 @@ function tablesHtml() {
       <div class="row"><span class="muted">${tab.name ? `<strong>${esc(tab.name)}</strong> · ` : ""}Cuenta <span class="mono">${esc(tab.code)}</span>${tab.openedBy ? ` · abrió ${esc(tab.openedBy)}` : ""} · abierta ${tab.openedAt ? fmtTime(toMillis(tab.openedAt)) : ""} · ${rounds.length} ${rounds.length === 1 ? "ronda" : "rondas"}${pending ? ` · ${pending} en cocina` : ""}</span><span class="price">${money(total, cur())}</span></div>
       ${summaryHtml(rounds.map((r) => r.items), cur(), "Resumen de la cuenta", rounds.reduce((a, r) => a + (Number(r.discount) || 0), 0))}
       <details><summary class="muted">Ver por ronda</summary>${rounds.map((r, i) => `<div class="round"><div class="row"><strong>Ronda ${i + 1}</strong><span class="muted">${STATUS_LABEL[r.status]}</span><span class="price">${money(r.total, cur())}</span></div>${itemsByPlate(r.items)}</div>`).join("")}</details>
+      ${tab.phone ? `<div>${loyaltyBadge(tab.phone)}</div>` : ""}
       ${tipPickerHtml(tab.id, total, state.tips[tab.id], cur())}
       <div class="acts"><button class="primary" data-close="${esc(tab.id)}" data-method="efectivo">Cobrado en efectivo</button>
         <button data-close="${esc(tab.id)}" data-method="tarjeta">Cobrado con tarjeta</button></div></div>`;
@@ -363,6 +388,15 @@ function settingsHtml() {
     <label>Número de mesas<input id="sTables" type="number" min="1" max="200" value="${esc(c.tables)}"></label>
     <label>Comisión de Uber Eats (%)<input id="sUberFee" type="number" min="0" max="60" step="0.1" value="${esc(c.uberFee ?? "")}" placeholder="Ej. 30"></label>
     <label>Comisión de DiDi Food (%)<input id="sDidiFee" type="number" min="0" max="60" step="0.1" value="${esc(c.didiFee ?? "")}" placeholder="Ej. 25"></label>
+    <fieldset style="grid-column:1/-1;border:1px solid var(--line);border-radius:10px;padding:10px"><legend class="label">Horario (si lo dejas vacío, siempre abierto)</legend>
+      <div class="hours">${DAY_NAMES.map((n, i) => { const h = (c.hours || {})[String(i)] || {}; return `<div class="hrow"><span>${n}</span>
+        <input id="h${i}o" type="time" value="${esc(h.open || "")}"> a <input id="h${i}c" type="time" value="${esc(h.close || "")}">
+        <label class="check"><input id="h${i}x" type="checkbox" ${h.off ? "checked" : ""}> Cerrado</label></div>`; }).join("")}</div></fieldset>
+    <label style="grid-column:1/-1">Zonas de domicilio (una por línea: Colonia | costo de envío | minutos extra)
+      <textarea id="sZones" rows="4" placeholder="Centro | 0 | 10&#10;San Juan | 20 | 20">${esc((c.zones || []).map((z) => `${z.name} | ${z.fee || 0} | ${z.minutes || 0}`).join("\n"))}</textarea></label>
+    <label class="check"><input id="sLoyOn" type="checkbox" ${c.loyalty && c.loyalty.on ? "checked" : ""}> Programa de lealtad (por teléfono)</label>
+    <label>Visitas para el premio<input id="sLoyEvery" type="number" min="2" max="50" value="${esc((c.loyalty && c.loyalty.every) || 10)}"></label>
+    <label>Premio<input id="sLoyReward" maxlength="80" value="${esc((c.loyalty && c.loyalty.reward) || "Una orden de tacos gratis")}"></label>
     <label>Fondo de caja (efectivo con el que abres)<input id="sFloat" type="number" min="0" step="1" value="${esc(c.cashFloat ?? "")}" placeholder="Ej. 500"></label>
     <label>Enlace para reseñas en Google (opcional)<input id="sGoogle" maxlength="300" placeholder="https://g.page/r/..." value="${esc(c.googleReviewUrl || "")}"></label>
     <label>Notas rápidas en la comida (separadas por coma)<input id="sNotes" maxlength="200" value="${esc((c.quickNotes && c.quickNotes.length ? c.quickNotes : ["Con todo", "Sin cebolla", "Sin cilantro", "Sin salsa"]).join(", "))}"></label>
@@ -772,6 +806,7 @@ function setStatus(id, status) {
     if (status !== "cancelado") patch[status + "At"] = serverTimestamp();
     if (status === "entregado" && o && o.type === "llevar") patch.paid = true;
     if (status === "entregado" && o && o.type === "plataforma") { patch.paid = true; patch.payMethod = o.platform; }
+    if (status === "entregado" && o && (o.type === "llevar" || o.type === "casa")) loyaltyBump(b, o.phone);
     b.update(doc(db, "orders", id), patch);
     if (o && o.type === "mesa" && o.session) b.set(doc(db, "tabs", o.session, "rounds", id), { status }, { merge: true });
     if (status === "entregado" || status === "cancelado") b.delete(doc(db, "queue", id));
@@ -790,6 +825,7 @@ function closeTab(tabId, method) {
     const b = writeBatch(db);
     const tip = tipAmount(total, state.tips[tabId]);
     b.set(doc(db, "tabs", tabId), { closed: true, billRequested: false, total, payMethod: method, closedAt: serverTimestamp(), tip, tipBy: isMgr() ? (state.mgrName || "Encargado") : "Dueño", call: deleteField() }, { merge: true });
+    if (tab.phone && rounds.length) loyaltyBump(b, tab.phone);
     for (const r of rounds) {
       const patch = { paid: true, payMethod: method };
       if (r.status !== "entregado") {
@@ -844,6 +880,12 @@ document.addEventListener("click", (ev) => {
   }
   if (d.repdays) { state.repDays = Number(d.repdays); state.repData = null; render(); return; }
   if ("cortereload" in d) { state.corteData = null; render(); return; }
+  if (d.redeem) {
+    if (!t.dataset.confirm) { t.dataset.confirm = "1"; t.textContent = "¿Ya se lo diste? Toca otra vez"; return; }
+    const p = d.redeem;
+    write(async () => { await setDoc(doc(db, "loyalty", p), { count: increment(-loyEvery()), redeemedAt: serverTimestamp() }, { merge: true }); state.loy[p] = null; delete state.loy[p]; }, "Premio canjeado").then(() => render());
+    return;
+  }
   if (d.callok) { write(() => updateDoc(doc(db, "tabs", d.callok), { call: deleteField() })); return; }
   if (d.tip) { state.tips[d.tip] = { pct: Number(d.pct) }; render(); return; }
   if (d.invoice) { write(() => updateDoc(doc(db, "invoices", d.invoice), { done: d.done === "1" }), d.done === "1" ? "Factura marcada como hecha" : null); return; }
@@ -1014,6 +1056,18 @@ document.addEventListener("submit", (ev) => {
       quickNotes: $("sNotes").value.split(",").map((x) => x.replace(/[|+]/g, " ").trim()).filter(Boolean).slice(0, 12),
       upsellCategory: $("sUpsell").value.trim() || "Bebidas",
       cashFloat: Math.max(0, Number($("sFloat").value) || 0),
+      hours: (() => {
+        const out = {}; let any = false;
+        for (let i = 0; i < 7; i++) {
+          const o = $("h" + i + "o").value, cl = $("h" + i + "c").value, off = $("h" + i + "x").checked;
+          if (o || cl || off) any = true;
+          out[String(i)] = { open: o, close: cl, off };
+        }
+        return any ? out : null;
+      })(),
+      zones: $("sZones").value.split("\n").map((l) => l.split("|").map((x) => x.trim())).filter((p) => p[0])
+        .slice(0, 40).map(([name, fee, minutes]) => ({ name: name.slice(0, 60), fee: Math.max(0, Number(fee) || 0), minutes: Math.max(0, Number(minutes) || 0) })),
+      loyalty: { on: $("sLoyOn").checked, every: Math.min(50, Math.max(2, Number($("sLoyEvery").value) || 10)), reward: $("sLoyReward").value.trim().slice(0, 80) || "Un premio" },
       googleReviewUrl: /^https:\/\//.test($("sGoogle").value.trim()) ? $("sGoogle").value.trim() : "",
       uberFee: Math.min(60, Math.max(0, Number($("sUberFee").value) || 0)),
       didiFee: Math.min(60, Math.max(0, Number($("sDidiFee").value) || 0)),

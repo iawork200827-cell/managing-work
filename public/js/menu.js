@@ -7,7 +7,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import {
   db, configured, $, esc, money, toMillis, local, toast, notConfiguredHtml,
-  STATUS_LABEL, DEFAULT_CONFIG, prepMinutes, estimate, isClosed, newId, showErrorsOnPage, summaryHtml, tableLabel, tableIds, BAR_ID, platesHtml
+  STATUS_LABEL, DEFAULT_CONFIG, prepMinutes, estimate, isClosed, newId, showErrorsOnPage, summaryHtml, tableLabel, tableIds, BAR_ID, platesHtml, normPhone, withinHours, hoursText, scheduleSlots
 } from "./common.js";
 import {
   buildItems, cleanPlates, validKey as vKey, isOut as isOutP, totals, productCard, selectionFor, handleSelectClick, promoLabels
@@ -59,13 +59,22 @@ const state = {
   tabName: local.get("comanda.name") || "",
   invoiceOpen: false,
   review: { stars: 0, comment: "" },
+  zone: local.get("comanda.zone") || "",
+  when: "",          // "" = lo antes posible; "HH:MM" = programado
+  loy: {},           // avance de lealtad por teléfono
+  tabPhone: local.get("comanda.phone") || "",
   callOpen: false,
   inv: { rfc: "", razon: "", email: "", cp: "", regimen: "", uso: "G03 - Gastos en general" },
   mySession: tableParam ? local.get("comanda.session." + tableParam) : null
 };
 
 const cur = () => state.config.currency || "$";
-const closed = () => isClosed(state.config);
+// Cerrado: el dueño cerró el día, o estamos fuera de horario (desde casa se puede programar para más tarde)
+const outOfHours = () => !withinHours(state.config);
+const closed = () => isClosed(state.config) || (outOfHours() && !(MODE === "casa" && scheduleSlots(state.config).length));
+const zones = () => (Array.isArray(state.config.zones) ? state.config.zones : []).filter((z) => z && z.name);
+const zoneFee = () => { const z = zones().find((x) => x.name === state.zone); return z ? Number(z.fee) || 0 : 0; };
+const loyaltyOn = () => !!(state.config.loyalty && state.config.loyalty.on);
 function notice(msg) { const n = $("notice"); n.textContent = msg || ""; n.hidden = !msg; }
 
 // ---------- carrito (lógica compartida en cart.js) ----------
@@ -153,7 +162,7 @@ function takeoutTicket(o) {
   else if (o.status === "cancelado") main = `<div class="full"><h2>Tu pedido fue cancelado.</h2><p class="muted" style="margin:4px 0 0">Pregunta en el mostrador si tienes dudas.</p></div>`;
   else if (o.status === "entregado") main = `<div class="full"><h2>Pedido entregado. ¡Buen provecho!</h2></div>`;
   else main = `<div><div class="label">Pedidos delante de ti</div><div class="big">${q.ahead}</div></div>
-      <div><div class="label">${toHome ? "Sale a domicilio en" : "Tiempo estimado"}</div><div class="big">~${q.minutes} min</div></div>`;
+      <div><div class="label">${o.scheduledFor ? "Programado para" : toHome ? "Sale a domicilio en" : "Tiempo estimado"}</div><div class="big">${o.scheduledFor ? esc(o.scheduledFor) : `~${q.minutes} min`}</div></div>`;
   const payNote = o.paid ? "Pagado" : o.type === "casa" ? "Pago por transferencia" : "Pagas al recoger";
   return `<div class="ticket ${ready ? "ready" : ""}" aria-live="polite">
     <div><div class="label">Tu pedido</div><div class="big">#${esc(o.code)}</div><div class="muted">${esc(o.customer)}</div></div>
@@ -162,6 +171,7 @@ function takeoutTicket(o) {
     <div class="full">${summaryHtml([o.items], cur(), "Tu pedido", Number(o.discount) || 0)}
       <div class="muted" style="margin-top:6px">${payNote}${o.type === "casa" ? (o.delivery === "domicilio" ? " · A domicilio" : " · Pasas a recoger") : ""}</div></div>
     ${o.status !== "por_pagar" && o.status !== "cancelado" ? `<div class="full">${invoiceHtml(o.id)}</div>` : ""}
+    ${o.phone ? `<div class="full">${loyaltyHtml(o.phone)}</div>` : ""}
     ${o.status === "entregado" ? `<div class="full">${reviewHtml(o.id)}</div>` : ""}
     ${done ? `<div class="full"><button data-neworder>Hacer otro pedido</button></div>` : ""}
   </div>`;
@@ -195,6 +205,7 @@ function chooseTab() {
       ${state.tableKey
         ? `<p class="muted" style="margin:0 0 8px">¿Es la primera cuenta de la mesa o quieren <strong>pagar aparte</strong>? Abre una cuenta nueva y comparte su código.</p>
            <div style="display:flex;gap:8px;flex-wrap:wrap"><input id="tabName" maxlength="40" autocomplete="name" placeholder="Tu nombre (opcional)" style="flex:1 1 160px;width:auto" value="${esc(state.tabName)}">
+           ${loyaltyOn() ? `<input id="tabPhone" type="tel" inputmode="tel" maxlength="20" placeholder="Teléfono (tarjeta de lealtad)" style="flex:1 1 160px;width:auto" value="${esc(state.tabPhone)}">` : ""}
            <button data-newtab>Abrir cuenta nueva</button></div>`
         : `<p class="muted" style="margin:0">Para abrir una cuenta nueva, <strong>escanea el código QR que está en tu mesa</strong>.</p>`}
     </div></div>`;
@@ -239,6 +250,21 @@ async function sendInvoice(ref, kind, total, code) {
     toast("Listo, recibimos tus datos para la factura");
     render();
   } catch (e) { console.error(e); toast("No se pudo enviar. Revisa los datos e intenta otra vez."); }
+}
+
+// ---------- lealtad ----------
+const loyWatch = {};
+function loyaltyHtml(phone) {
+  const p = normPhone(phone);
+  if (!loyaltyOn() || !p) return "";
+  if (!loyWatch[p]) loyWatch[p] = onSnapshot(doc(db, "loyalty", p), (s) => { state.loy[p] = s.exists() ? s.data() : { count: 0 }; render(); }, () => {});
+  const l = state.loy[p]; if (!l) return "";
+  const every = Math.max(2, Number(state.config.loyalty.every) || 10);
+  const n = Number(l.count) || 0;
+  const reward = state.config.loyalty.reward || "un premio";
+  return `<div class="loyal"><span class="label">Tarjeta de lealtad</span>
+    <div class="dots">${Array.from({ length: every }, (_, i) => `<span class="${i < Math.min(n, every) ? "on" : ""}"></span>`).join("")}</div>
+    <div class="muted" style="font-size:.85rem">${n >= every ? `¡Ya tienes tu premio: ${esc(reward)}! Pídelo al pagar.` : `Llevas ${n} de ${every}. Al completar: ${esc(reward)}.`}</div></div>`;
 }
 
 // ---------- reseña ----------
@@ -299,6 +325,7 @@ function tabTicket(t) {
   }
   html += `<div class="full" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">`;
   if (rounds.length) html += t.billRequested ? `<span class="tag">Ya pediste la cuenta. En un momento te atienden.</span>` : `<button data-bill>Pedir la cuenta</button>`;
+  if (t.phone) html += `<div class="full">${loyaltyHtml(t.phone)}</div>`;
   html += callHtml(t);
   html += `<button data-leavetab>Pedir en una cuenta aparte</button></div>`;
   if (rounds.length) html += `<div class="full">${invoiceHtml(state.mySession)}</div>`;
@@ -314,15 +341,20 @@ function checkoutHtml() {
     <h2 style="margin-top:12px">Tu pedido</h2>
     ${itemsByPlate(items)}
     ${totalsHtml()}
-    <div class="price">Total: ${money(cartTotal(), cur())}${delivery === "domicilio" ? ' <span class="muted">· envío gratis</span>' : ""}</div>
+    <div class="price">Total: ${money(cartTotal() + (delivery === "domicilio" ? zoneFee() : 0), cur())}${delivery === "domicilio" ? ` <span class="muted">· ${zoneFee() ? "incluye envío " + money(zoneFee(), cur()) : "envío gratis"}</span>` : ""}</div>
     <form id="casaForm" class="form" style="margin-top:14px">
       <label>Tu nombre<input id="custName" required maxlength="60" autocomplete="name" value="${esc(state.customer)}"></label>
       <label>Teléfono<input id="custPhone" required type="tel" inputmode="tel" maxlength="20" autocomplete="tel" value="${esc(state.phone)}"></label>
       <div class="opts" role="radiogroup" aria-label="Entrega" style="grid-column:1/-1">
-        ${canDeliver ? `<button type="button" role="radio" aria-checked="${delivery === "domicilio"}" class="${delivery === "domicilio" ? "on" : ""}" data-delivery="domicilio">A domicilio (gratis)</button>` : ""}
+        ${canDeliver ? `<button type="button" role="radio" aria-checked="${delivery === "domicilio"}" class="${delivery === "domicilio" ? "on" : ""}" data-delivery="domicilio">A domicilio${zones().length ? "" : " (gratis)"}</button>` : ""}
         <button type="button" role="radio" aria-checked="${delivery === "recoger"}" class="${delivery === "recoger" ? "on" : ""}" data-delivery="recoger">Paso a recoger</button>
       </div>
       ${canDeliver ? "" : `<p class="muted" style="grid-column:1/-1;margin:0">Hoy no tenemos servicio a domicilio. Puedes pedir y pasar a recoger.</p>`}
+      ${delivery === "domicilio" && zones().length ? `<label style="grid-column:1/-1">Zona o colonia<select id="custZone" required><option value="">Elige tu zona…</option>${zones().map((z) => `<option value="${esc(z.name)}" ${z.name === state.zone ? "selected" : ""}>${esc(z.name)} · ${Number(z.fee) ? "envío " + money(z.fee, cur()) : "envío gratis"}${z.minutes ? " · +" + z.minutes + " min" : ""}</option>`).join("")}</select></label>
+        <p class="muted" style="grid-column:1/-1;margin:0">¿No aparece tu colonia? Por ahora no llegamos ahí; puedes pasar a recoger.</p>` : ""}
+      ${(() => { const slots = scheduleSlots(state.config); const now = !outOfHours();
+        if (!slots.length && now) return "";
+        return `<label style="grid-column:1/-1">¿Para cuándo?<select id="custWhen">${now ? `<option value="">Lo antes posible</option>` : ""}${slots.map((t) => `<option value="${t}" ${t === state.when ? "selected" : ""}>Hoy a las ${t}</option>`).join("")}</select></label>`; })()}
       ${delivery === "domicilio" ? `<label style="grid-column:1/-1">Dirección completa (calle, número, colonia, referencias)<input id="custAddr" required maxlength="200" autocomplete="street-address" value="${esc(state.address)}"></label>` : ""}
       <label style="grid-column:1/-1">Nota (opcional)<input id="custNote" maxlength="200" value="${esc(state.note)}" placeholder="Sin cebolla, salsa aparte…"></label>
       <p class="muted" style="grid-column:1/-1;margin:0">Pagas por transferencia antes de que preparemos tu pedido. Al enviarlo te mostramos los datos.</p>
@@ -362,7 +394,8 @@ function renderInner() {
   if (MODE === "mesa" && !state.table) { app.innerHTML = tablePicker(); $("cartbar").hidden = true; return; }
 
   let html = "";
-  if (closed()) html += `<div class="notice"><strong>Hoy ya no estamos recibiendo pedidos.</strong> ¡Te esperamos mañana!</div>`;
+  if (isClosed(state.config)) html += `<div class="notice"><strong>Hoy ya no estamos recibiendo pedidos.</strong> ¡Te esperamos mañana!</div>`;
+  else if (outOfHours()) html += `<div class="notice"><strong>En este momento estamos cerrados.</strong> ${esc(hoursText(state.config))}${MODE === "casa" && scheduleSlots(state.config).length ? " Puedes hacer tu pedido y programarlo para más tarde." : ""}</div>`;
   if (MODE !== "mesa" && state.myOrder) html += takeoutTicket(state.myOrder);
   if (MODE === "casa" && state.checkout && cartUnits() && !closed()) { app.innerHTML = html + checkoutHtml(); $("cartbar").hidden = true; return; }
   if (MODE === "mesa") html += tableHeader();
@@ -423,6 +456,7 @@ function renderCart() {
   bar.innerHTML = (state.upsell ? `<div class="in">${upsellHtml()}</div>` : "") + `<div class="in">${totalsHtml()}</div><div class="in">
     <span class="sum">${units} ${units === 1 ? "pieza" : "piezas"} · ${money(cartTotal(), cur())}</span>
     ${MODE === "llevar" ? `<input id="custName" placeholder="Tu nombre" autocomplete="given-name" maxlength="60" value="${esc(state.customer)}" aria-label="Tu nombre">` : ""}
+    ${MODE === "llevar" && loyaltyOn() ? `<input id="custPhone" type="tel" inputmode="tel" placeholder="Tu teléfono (para tu tarjeta de lealtad)" maxlength="20" value="${esc(state.phone)}" aria-label="Teléfono para lealtad">` : ""}
     <input id="custNote" placeholder="Nota (sin cebolla, salsa aparte…)" maxlength="200" value="${esc(state.note)}" aria-label="Nota para la cocina">
     <button class="primary" id="placeOrder" ${state.sending ? "disabled" : ""}>${label}</button>
   </div>
@@ -440,6 +474,7 @@ async function openNewTab() {
   b.set(doc(db, "tabSecrets", session), { table: state.table, key: state.tableKey, openedAt: serverTimestamp() });
   const tab = { table: state.table, openedAt: serverTimestamp(), code, closed: false, billRequested: false };
   if (state.tabName.trim()) tab.name = state.tabName.trim().slice(0, 40);
+  if (loyaltyOn() && normPhone(state.tabPhone)) { tab.phone = normPhone(state.tabPhone); local.set("comanda.phone", tab.phone); }
   b.set(doc(db, "tabs", session), tab);
   b.set(doc(db, "joins", state.table + "-" + code), { session, table: state.table, createdAt: serverTimestamp() });
   try { await b.commit(); }
@@ -484,6 +519,8 @@ async function placeOrder() {
   if (MODE === "casa") {
     if (state.phone.replace(/\D/g, "").length < 7) { toast("Escribe tu teléfono"); $("custPhone")?.focus(); return; }
     if (delivery === "domicilio" && state.address.trim().length < 5) { toast("Escribe tu dirección completa"); $("custAddr")?.focus(); return; }
+    if (delivery === "domicilio" && zones().length && !zones().some((z) => z.name === state.zone)) { toast("Elige tu zona o colonia"); $("custZone")?.focus(); return; }
+    if (outOfHours() && !state.when) { const sl = scheduleSlots(state.config); if (sl.length) state.when = sl[0]; }
   }
 
   if (MODE === "mesa" && !inTab()) {
@@ -518,7 +555,14 @@ async function placeOrder() {
       order.phone = state.phone.trim().slice(0, 20);
       order.delivery = delivery;
       if (delivery === "domicilio") order.address = state.address.trim().slice(0, 200);
+      if (delivery === "domicilio" && zones().length) {
+        order.zone = state.zone.slice(0, 60);
+        order.deliveryFee = zoneFee();
+        order.total = Math.round((order.total + order.deliveryFee) * 100) / 100;
+      }
+      if (state.when) order.scheduledFor = state.when;
     }
+    if (MODE === "llevar" && normPhone(state.phone)) order.phone = normPhone(state.phone);
     if (MODE === "mesa") {
       order.table = state.table;
       order.session = await ensureTableSession();
@@ -541,6 +585,8 @@ async function placeOrder() {
       local.set("comanda.phone", state.phone.trim());
       local.set("comanda.delivery", delivery);
       if (delivery === "domicilio") local.set("comanda.address", state.address.trim());
+      if (state.zone) local.set("comanda.zone", state.zone);
+      state.when = "";
     }
     if (MODE !== "mesa") { local.set("comanda.name", name); watchMyOrder(ref.id); toast(MODE === "casa" ? "Pedido recibido. Ahora paga para que lo preparemos." : "¡Pedido enviado!"); }
     else toast("¡Ronda enviada a cocina!");
@@ -658,6 +704,9 @@ document.addEventListener("input", (ev) => {
   if (id === "payRef") state.payRef = ev.target.value;
   if (id === "joinCode") state.joinCode = ev.target.value;
   if (id === "tabName") state.tabName = ev.target.value;
+  if (id === "tabPhone") state.tabPhone = ev.target.value;
+  if (id === "custZone") { state.zone = ev.target.value; render(); }
+  if (id === "custWhen") state.when = ev.target.value;
   if (id === "reviewComment") state.review.comment = ev.target.value;
   const invMap = { invRfc: "rfc", invRazon: "razon", invEmail: "email", invCp: "cp", invRegimen: "regimen", invUso: "uso" };
   if (invMap[id]) state.inv[invMap[id]] = ev.target.value;

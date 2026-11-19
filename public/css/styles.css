@@ -207,3 +207,12 @@ input[type="checkbox"] { width: auto }
 .bar .bl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 .bar .bt { height: 10px; background: var(--bg); border-radius: 999px; overflow: hidden }
 .bar .bt span { display: block; height: 100%; background: var(--accent); border-radius: 999px }
+.loyal { background: var(--bg); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px }
+.dots { display: flex; gap: 5px; flex-wrap: wrap }
+.dots span { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--accent) }
+.dots span.on { background: var(--accent) }
+.hours { display: flex; flex-direction: column; gap: 6px }
+.hrow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: .88rem }
+.hrow > span { width: 90px }
+.hrow input[type=time] { width: auto }
+textarea { font: inherit; color: inherit; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; width: 100% }

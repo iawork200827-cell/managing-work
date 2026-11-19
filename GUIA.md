@@ -103,3 +103,17 @@ Los clientes pueden pedir factura desde su ticket o desde la cuenta de su mesa (
 ## Ventas
 
 En **Panel → Ventas** ves el total del día (y de días anteriores), separado en efectivo, tarjeta y transferencia. Si algo se cobró por error, toca **Anular** y deja de sumar; **Restaurar** lo deshace.
+
+## Más funciones
+
+- **Extras y notas**: en cada producto puedes poner extras con precio ("Extra queso:10") y en Ajustes las notas rápidas (sin cebolla, etc.).
+- **Fotos y "Lo más pedido"**: al editar un producto.
+- **Promociones** (pestaña Promociones): 2×1 o % de descuento en un producto o categoría, por día y hora.
+- **Sugerencia de bebida** antes de enviar (la categoría se cambia en Ajustes).
+- **Propinas** al cobrar una cuenta; salen en el corte y en reportes por persona.
+- **Llamar al mesero**: botón en la cuenta de la mesa; avisa en el panel y en el modo empleado.
+- **Corte de caja** y **Reportes** (solo el dueño).
+- **Reseñas**: al terminar, el cliente califica; con 4-5 estrellas se le muestra tu enlace de Google (Ajustes).
+- **Horario**: en Ajustes; fuera de horario no se reciben pedidos, y desde casa se pueden programar para más tarde.
+- **Zonas de domicilio**: en Ajustes (Colonia | costo | minutos). El repartidor usa la pestaña Domicilios en el modo empleado.
+- **Lealtad**: en Ajustes (visitas para el premio y premio). Se suma una visita por pedido entregado o cuenta cobrada con teléfono; el premio se canjea desde el panel.

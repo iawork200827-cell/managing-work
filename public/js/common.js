@@ -173,3 +173,46 @@ export function tipPickerHtml(tabId, total, choice, currency = "$") {
     <input id="tipc-${esc(tabId)}" data-tipcustom="${esc(tabId)}" type="number" min="0" step="1" inputmode="decimal" placeholder="Otra $" value="${c.custom != null ? esc(c.custom) : ""}" style="width:90px">
     <span class="mono">${money(tipAmount(total, c), currency)}</span></div>`;
 }
+
+// ---------- teléfono (para lealtad) ----------
+export function normPhone(p) {
+  const d = String(p || "").replace(/\D/g, "");
+  return d.length >= 10 ? d.slice(-10) : "";
+}
+
+// ---------- horario ----------
+// config.hours = { "0": { open: "13:00", close: "23:00", off: false }, ... } (0 = domingo)
+export const DAY_NAMES = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
+const toMin = (hhmm) => { const [h, m] = String(hhmm || "").split(":").map(Number); return (h || 0) * 60 + (m || 0); };
+const toHHMM = (min) => `${String(Math.floor(min / 60) % 24).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
+export function hoursToday(config, now = new Date()) {
+  const h = config && config.hours && config.hours[String(now.getDay())];
+  if (!config || !config.hours) return null;      // sin horario configurado: siempre abierto
+  if (!h || h.off || !h.open || !h.close) return { off: true };
+  return { open: h.open, close: h.close };
+}
+export function withinHours(config, now = new Date()) {
+  const h = hoursToday(config, now);
+  if (!h) return true;
+  if (h.off) return false;
+  const t = now.getHours() * 60 + now.getMinutes(), o = toMin(h.open), c = toMin(h.close);
+  return o <= c ? t >= o && t < c : t >= o || t < c;
+}
+export function hoursText(config, now = new Date()) {
+  const h = hoursToday(config, now);
+  if (!h) return "";
+  if (h.off) return "Hoy no abrimos.";
+  return `Hoy abrimos de ${h.open} a ${h.close}.`;
+}
+// Horas para programar un pedido hoy (cada 30 min, desde 30 min a partir de ahora y dentro del horario)
+export function scheduleSlots(config, now = new Date()) {
+  const h = hoursToday(config, now);
+  const t = now.getHours() * 60 + now.getMinutes();
+  const o = h && !h.off ? toMin(h.open) : 0, c = h && !h.off ? toMin(h.close) : 24 * 60;
+  if (h && h.off) return [];
+  let start = Math.max(t + 30, o);
+  start = Math.ceil(start / 30) * 30;
+  const out = [];
+  for (let m = start; m <= Math.min(c - 15, 24 * 60 - 1); m += 30) out.push(toHHMM(m));
+  return out.slice(0, 24);
+}
