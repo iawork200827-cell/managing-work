@@ -125,3 +125,23 @@ input[type="checkbox"] { width: auto }
   .no-print, .tabs, .top, .toast { display: none !important }
   .qrcard { border: 1px solid #999 }
 }
+
+/* Inicio: elegir mesa o para llevar */
+.choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px }
+.choice { display: flex; flex-direction: column; gap: 6px; padding: 22px; border-radius: var(--r); background: var(--surface); border: 1px solid var(--line); color: var(--ink); text-decoration: none }
+.choice strong { font-family: var(--display); font-size: 1.5rem }
+.choice:hover, .choice:focus-visible { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--accent-soft) }
+.switch-link { font-weight: 600; font-size: .9rem; text-decoration: none; padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted) }
+
+/* Platos (mesa) */
+.plates { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; margin-top: 4px }
+.plates button { white-space: nowrap; font-size: .85rem }
+.plates button.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent) }
+.plate-label { font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--accent); margin-top: 6px }
+.round { border-top: 1px solid var(--line); padding-top: 8px; margin-top: 8px }
+.round .row { display: flex; gap: 8px; align-items: baseline; justify-content: space-between; flex-wrap: wrap }
+.order .plate-label + ul, .round .plate-label + ul { margin-top: 2px }
+.closed-bar { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; padding: 12px 14px; border-radius: var(--r); margin-bottom: 14px; background: var(--accent-soft) }
+.closed-bar.off { background: var(--bad-soft) }
+.tag.bill { background: var(--bad-soft); color: var(--bad) }
+.late { color: var(--bad); font-weight: 700 }

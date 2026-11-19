@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;700&display=swap">
+  <link rel="stylesheet" href="css/styles.css">
+  <title>Mesa</title>
+  <meta name="description" content="Ordena desde tu mesa, por platos, y paga al final.">
+</head>
+<body data-mode="mesa">
+  <div class="wrap">
+    <header class="top">
+      <div class="brand">
+        <span class="label" id="eyebrow">Mesa</span>
+        <h1 id="shopName">Tacos Josué</h1>
+      </div>
+      <a class="switch-link" href="/">Inicio</a>
+    </header>
+    <div id="notice" class="notice" hidden></div>
+    <main id="app"><p class="muted">Cargando el menú…</p></main>
+  </div>
+  <div id="cartbar" class="cartbar" hidden></div>
+  <script type="module" src="js/menu.js"></script>
+</body>
+</html>

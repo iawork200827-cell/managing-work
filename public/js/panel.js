@@ -1,22 +1,26 @@
-// Panel del dueño: pedidos, productos (disponible / agotado), ajustes y códigos QR.
+// Panel del administrador: pedidos y tiempos, mesas (cuentas abiertas), productos, ajustes, QR
+// y botón para cerrar los pedidos del día.
 import {
-  collection, doc, onSnapshot, query, where, orderBy, writeBatch, updateDoc, addDoc, deleteDoc, setDoc, Timestamp
+  collection, doc, onSnapshot, query, where, orderBy, writeBatch, updateDoc, addDoc, deleteDoc, setDoc,
+  serverTimestamp, Timestamp
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import {
   signInWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   db, auth, configured, OWNER_EMAILS, $, esc, money, toMillis, toast, notConfiguredHtml,
-  STATUS_LABEL, DEFAULT_CONFIG
+  STATUS_LABEL, DEFAULT_CONFIG, isClosed, endOfToday, prepMinutes
 } from "./common.js";
 
 const state = {
-  user: null, tab: "pedidos", config: { ...DEFAULT_CONFIG }, products: [],
+  user: null, tab: "pedidos", config: { ...DEFAULT_CONFIG }, products: [], tables: [],
   active: new Map(), today: new Map(), editId: null, resetForms: false,
   seen: null, fresh: new Set(), soundOn: false, unsubs: []
 };
 const cur = () => state.config.currency || "$";
 const isOwner = (u) => !!u && OWNER_EMAILS.map((e) => e.toLowerCase()).includes(String(u.email || "").toLowerCase());
+const fmtTime = (ms) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+const mins = (ms) => Math.max(0, Math.round(ms / 60000));
 
 function notice(msg) { const n = $("notice"); n.textContent = msg || ""; n.hidden = !msg; }
 
@@ -24,24 +28,30 @@ function notice(msg) { const n = $("notice"); n.textContent = msg || ""; n.hidde
 let audio = null;
 function beep() {
   if (!state.soundOn || !audio) return;
-  const o = audio.createOscillator(), g = audio.createGain();
-  o.type = "sine"; o.frequency.value = 880; o.connect(g); g.connect(audio.destination);
-  g.gain.setValueAtTime(0.0001, audio.currentTime);
-  g.gain.exponentialRampToValueAtTime(0.3, audio.currentTime + 0.02);
-  g.gain.exponentialRampToValueAtTime(0.0001, audio.currentTime + 0.5);
-  o.start(); o.stop(audio.currentTime + 0.5);
+  [0, 0.25].forEach((t) => {
+    const o = audio.createOscillator(), g = audio.createGain();
+    o.type = "sine"; o.frequency.value = 880; o.connect(g); g.connect(audio.destination);
+    const s = audio.currentTime + t;
+    g.gain.setValueAtTime(0.0001, s);
+    g.gain.exponentialRampToValueAtTime(0.3, s + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, s + 0.2);
+    o.start(s); o.stop(s + 0.2);
+  });
 }
 
 // ---------- datos ----------
-function allOrders() {
-  const m = new Map([...state.today, ...state.active]);
-  return [...m.values()];
+function allOrders() { return [...new Map([...state.today, ...state.active]).values()]; }
+
+function toOrder(d) {
+  const x = d.data({ serverTimestamps: "estimate" });
+  const o = { id: d.id, ...x, createdAt: toMillis(x.createdAt) };
+  for (const k of ["preparandoAt", "listoAt", "entregadoAt"]) if (x[k]) o[k] = toMillis(x[k]);
+  return o;
 }
 
 function listen() {
   const onErr = (e) => { console.error(e); notice("No se pudieron leer los datos. Revisa que tu correo esté en firestore.rules y firebase-config.js."); };
   const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
-  const toOrder = (d) => { const x = d.data({ serverTimestamps: "estimate" }); return { id: d.id, ...x, createdAt: toMillis(x.createdAt) }; };
 
   state.unsubs.push(onSnapshot(doc(db, "config", "shop"), (s) => {
     if (s.exists()) state.config = { ...DEFAULT_CONFIG, ...s.data() };
@@ -51,9 +61,15 @@ function listen() {
     state.products = s.docs.map((d) => ({ id: d.id, ...d.data() }));
     render();
   }, onErr));
+  state.unsubs.push(onSnapshot(collection(db, "tables"), (s) => {
+    const before = new Set(state.tables.filter((t) => t.billRequested).map((t) => t.id));
+    state.tables = s.docs.map((d) => ({ id: d.id, ...d.data() }));
+    const asked = state.tables.filter((t) => t.status === "abierta" && t.billRequested && !before.has(t.id));
+    if (state.seen && asked.length) { toast(`Mesa ${asked[0].id} pidió la cuenta`); beep(); }
+    render();
+  }, onErr));
   state.unsubs.push(onSnapshot(query(collection(db, "orders"), where("status", "in", ["pendiente", "preparando", "listo"])), (s) => {
     state.active = new Map(s.docs.map((d) => [d.id, toOrder(d)]));
-    // Avisar de pedidos nuevos (después de la primera carga)
     const ids = new Set([...state.active.values()].filter((o) => o.status === "pendiente").map((o) => o.id));
     if (state.seen) {
       const nuevos = [...ids].filter((id) => !state.seen.has(id));
@@ -61,7 +77,7 @@ function listen() {
         nuevos.forEach((id) => state.fresh.add(id));
         toast(nuevos.length === 1 ? "Nuevo pedido" : `${nuevos.length} pedidos nuevos`);
         beep();
-        document.title = "(Nuevo) Panel del dueño";
+        document.title = "(Nuevo) Panel";
       }
     }
     state.seen = ids;
@@ -91,11 +107,22 @@ function render() {
   if (!state.resetForms) document.querySelectorAll("#app form input").forEach((i) => { if (i.id && i.type !== "checkbox") keep[i.id] = i.value; });
   state.resetForms = false;
 
-  const tabs = [["pedidos", "Pedidos"], ["productos", "Productos"], ["ajustes", "Ajustes"], ["qr", "Códigos QR"]];
   const pend = [...state.active.values()].filter((o) => o.status === "pendiente").length;
-  let html = '<div class="tabs">' + tabs.map(([k, l]) =>
-    `<button data-tab="${k}" class="${state.tab === k ? "on" : ""}">${l}${k === "pedidos" && pend ? ` (${pend})` : ""}</button>`).join("") + "</div>";
+  const bills = state.tables.filter((t) => t.status === "abierta" && t.billRequested).length;
+  const openTables = state.tables.filter((t) => t.status === "abierta").length;
+  const tabs = [
+    ["pedidos", `Pedidos${pend ? ` (${pend})` : ""}`],
+    ["mesas", `Mesas${openTables ? ` (${openTables})` : ""}${bills ? " · cuenta" : ""}`],
+    ["productos", "Productos"], ["ajustes", "Ajustes"], ["qr", "Códigos QR"]
+  ];
+  const closed = isClosed(state.config);
+  let html = `<div class="closed-bar no-print ${closed ? "off" : ""}">
+    <strong>${closed ? "Cerrado por hoy: no se reciben pedidos nuevos" : "Recibiendo pedidos"}</strong>
+    <button id="dayBtn" class="${closed ? "primary" : "danger"}">${closed ? "Abrir pedidos" : "Cerrar pedidos por hoy"}</button>
+  </div>`;
+  html += '<div class="tabs">' + tabs.map(([k, l]) => `<button data-tab="${k}" class="${state.tab === k ? "on" : ""}">${l}</button>`).join("") + "</div>";
   if (state.tab === "pedidos") html += ordersHtml();
+  if (state.tab === "mesas") html += tablesHtml();
   if (state.tab === "productos") html += productsHtml();
   if (state.tab === "ajustes") html += settingsHtml();
   if (state.tab === "qr") html += qrHtml();
@@ -118,32 +145,55 @@ function loginHtml() {
   </form>`;
 }
 
+function itemsByPlate(items) {
+  const groups = {};
+  (items || []).forEach((i) => (groups[i.plate || 1] ||= []).push(i));
+  const keys = Object.keys(groups).sort((a, b) => a - b);
+  const list = (arr) => `<ul>${arr.map((i) => `<li>${Number(i.qty) || 0} × ${esc(i.name)}</li>`).join("")}</ul>`;
+  if (keys.length <= 1) return list(items || []);
+  return keys.map((k) => `<div class="plate-label">Plato ${k}</div>${list(groups[k])}`).join("");
+}
+
+function whoLabel(o) {
+  return o.type === "mesa" ? `<span class="tag">Mesa ${esc(o.table)}</span>` : `<span class="tag">Para llevar</span> <strong>${esc(o.customer)}</strong>`;
+}
+
+// Tiempo real que tardó en estar listo (de recibido a listo)
+const tookMin = (o) => (o.listoAt ? mins(o.listoAt - o.createdAt) : null);
+
 function ordersHtml() {
   const orders = allOrders();
   const todays = [...state.today.values()].filter((o) => o.status !== "cancelado");
   const sales = todays.reduce((s, o) => s + (Number(o.total) || 0), 0);
-  const inLine = orders.filter((o) => o.status === "pendiente" || o.status === "preparando").length;
-  const per = Number(state.config.minutesPerOrder) || 5;
+  const inLine = orders.filter((o) => o.status === "pendiente" || o.status === "preparando");
+  const took = todays.map(tookMin).filter((m) => m != null);
+  const avg = took.length ? Math.round(took.reduce((a, b) => a + b, 0) / took.length) : null;
+  const waitNew = Math.round(inLine.reduce((s, o) => s + (Number(o.minutes) || 5), 0) / Math.max(1, Number(state.config.capacity) || 1)) + prepMinutes(1, state.config);
   let html = `<div class="stats">
-    <div class="stat"><span class="label">En fila</span><b>${inLine}</b></div>
-    <div class="stat"><span class="label">Órdenes hoy</span><b>${todays.length}</b></div>
+    <div class="stat"><span class="label">En fila</span><b>${inLine.length}</b></div>
+    <div class="stat"><span class="label">Pedidos hoy</span><b>${todays.length}</b></div>
     <div class="stat"><span class="label">Ventas hoy</span><b>${money(sales, cur())}</b></div>
-    <div class="stat"><span class="label">Espera para nuevos</span><b>~${(inLine + 1) * per} min</b></div>
+    <div class="stat"><span class="label">Tiempo promedio real</span><b>${avg == null ? "—" : avg + " min"}</b></div>
+    <div class="stat"><span class="label">Espera para nuevos</span><b>~${waitNew} min</b></div>
   </div><div class="board">`;
-  const NEXT = { pendiente: ["preparando", "Empezar a preparar"], preparando: ["listo", "Marcar lista"], listo: ["entregado", "Entregada"] };
+  const NEXT = {
+    pendiente: () => ["preparando", "Empezar a preparar"],
+    preparando: () => ["listo", "Marcar listo"],
+    listo: (o) => ["entregado", o.type === "mesa" ? "Servido en mesa" : "Entregado y cobrado"]
+  };
   for (const s of ["pendiente", "preparando", "listo"]) {
     const list = orders.filter((o) => o.status === s).sort((a, b) => a.createdAt - b.createdAt);
     html += `<div class="col"><div class="col-head ${s}"><h3>${STATUS_LABEL[s]}</h3><span class="mono muted">${list.length}</span></div>`;
     if (!list.length) html += `<div class="empty">${s === "pendiente" ? "Aquí aparecen los pedidos nuevos." : "Sin pedidos"}</div>`;
     for (const o of list) {
-      const mins = Math.max(0, Math.round((Date.now() - o.createdAt) / 60000));
-      const [to, label] = NEXT[s];
+      const elapsed = mins(Date.now() - o.createdAt);
+      const late = s !== "listo" && elapsed > (Number(o.minutes) || 5);
+      const [to, label] = NEXT[s](o);
       html += `<div class="order ${state.fresh.has(o.id) ? "new" : ""}">
         <div class="row"><span class="mono" style="font-weight:700">#${esc(o.code)}</span>
-          ${o.table ? `<span class="tag">Mesa ${esc(o.table)}</span>` : ""}
-          <span class="muted mono">hace ${mins} min</span></div>
-        <div class="row"><strong>${esc(o.customer)}</strong><span class="price">${money(o.total, cur())}</span></div>
-        <ul>${(o.items || []).map((i) => `<li>${Number(i.qty) || 0} × ${esc(i.name)}</li>`).join("")}</ul>
+          <span class="mono ${late ? "late" : "muted"}">${s === "listo" ? `listo en ${tookMin(o) ?? elapsed} min` : `${elapsed} de ~${o.minutes || "?"} min`}</span></div>
+        <div class="row"><span>${whoLabel(o)}</span><span class="price">${money(o.total, cur())}</span></div>
+        ${itemsByPlate(o.items)}
         ${o.note ? `<div class="notice" style="margin:0">Nota: ${esc(o.note)}</div>` : ""}
         <div class="acts"><button class="primary" data-advance="${esc(o.id)}" data-to="${to}">${label}</button>
           ${s !== "listo" ? `<button class="danger" data-cancel="${esc(o.id)}">Cancelar</button>` : ""}</div>
@@ -152,11 +202,12 @@ function ordersHtml() {
     html += "</div>";
   }
   html += "</div>";
-  const doneToday = [...state.today.values()].filter((o) => o.status === "entregado" || o.status === "cancelado").sort((a, b) => b.createdAt - a.createdAt);
-  if (doneToday.length) {
-    html += `<details style="margin-top:20px"><summary><strong>Historial de hoy (${doneToday.length})</strong></summary><div class="plist" style="margin-top:10px">`;
-    for (const o of doneToday) {
-      html += `<div class="prow"><div><span class="mono">#${esc(o.code)}</span> · ${esc(o.customer)} · <span class="muted">${new Date(o.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span></div>
+  const done = [...state.today.values()].filter((o) => o.status === "entregado" || o.status === "cancelado").sort((a, b) => b.createdAt - a.createdAt);
+  if (done.length) {
+    html += `<details style="margin-top:20px"><summary><strong>Historial de hoy (${done.length})</strong></summary><div class="plist" style="margin-top:10px">`;
+    for (const o of done) {
+      const t = tookMin(o);
+      html += `<div class="prow"><div><span class="mono">#${esc(o.code)}</span> · ${o.type === "mesa" ? "Mesa " + esc(o.table) : esc(o.customer)} · <span class="muted">${fmtTime(o.createdAt)}${t != null ? ` · tardó ${t} min` : ""}</span></div>
         <div class="price ${o.status === "cancelado" ? "muted" : ""}">${o.status === "cancelado" ? "Cancelado" : money(o.total, cur())}</div></div>`;
     }
     html += "</div></details>";
@@ -164,12 +215,33 @@ function ordersHtml() {
   return html;
 }
 
+function roundsOf(t) {
+  return allOrders().filter((o) => o.type === "mesa" && o.session === t.session && o.status !== "cancelado").sort((a, b) => a.createdAt - b.createdAt);
+}
+
+function tablesHtml() {
+  const open = state.tables.filter((t) => t.status === "abierta").sort((a, b) => (b.billRequested ? 1 : 0) - (a.billRequested ? 1 : 0) || Number(a.id) - Number(b.id));
+  if (!open.length) return `<div class="empty">No hay mesas con cuenta abierta. Cuando un cliente pida desde el QR de su mesa, aparecerá aquí.</div>`;
+  let html = '<div class="board">';
+  for (const t of open) {
+    const rounds = roundsOf(t);
+    const total = rounds.reduce((s, r) => s + (Number(r.total) || 0), 0);
+    const pending = rounds.filter((r) => r.status !== "entregado").length;
+    html += `<div class="order"><div class="row"><h3>Mesa ${esc(t.id)}</h3>${t.billRequested ? '<span class="tag bill">Pidió la cuenta</span>' : ""}</div>
+      <div class="row"><span class="muted">Abierta ${t.openedAt ? fmtTime(toMillis(t.openedAt)) : ""} · ${rounds.length} ${rounds.length === 1 ? "ronda" : "rondas"}${pending ? ` · ${pending} en cocina` : ""}</span><span class="price">${money(total, cur())}</span></div>
+      <details><summary class="muted">Ver cuenta</summary>${rounds.map((r, i) => `<div class="round"><div class="row"><strong>Ronda ${i + 1}</strong><span class="muted">${STATUS_LABEL[r.status]}</span><span class="price">${money(r.total, cur())}</span></div>${itemsByPlate(r.items)}</div>`).join("")}</details>
+      <div class="acts"><button class="primary" data-close="${esc(t.id)}" data-method="efectivo">Cobrado en efectivo</button>
+        <button data-close="${esc(t.id)}" data-method="tarjeta">Cobrado con tarjeta</button></div></div>`;
+  }
+  return html + "</div>";
+}
+
 function productsHtml() {
   const e = state.editId ? state.products.find((p) => p.id === state.editId) : null;
   let html = `<form class="form" id="pform">
     <label>Nombre<input id="pName" required maxlength="80" value="${esc(e?.name)}"></label>
     <label>Precio<input id="pPrice" type="number" step="0.01" min="0" required value="${e ? esc(e.price) : ""}"></label>
-    <label>Categoría<input id="pCat" list="catlist" maxlength="40" placeholder="Platillos, Bebidas…" value="${esc(e?.category)}"></label>
+    <label>Categoría<input id="pCat" list="catlist" maxlength="40" placeholder="Tacos, Platillos, Bebidas…" value="${esc(e?.category)}"></label>
     <label>Descripción<input id="pDesc" maxlength="160" value="${esc(e?.description)}"></label>
     <datalist id="catlist">${[...new Set(state.products.map((p) => p.category).filter(Boolean))].map((c) => `<option value="${esc(c)}">`).join("")}</datalist>
     <div style="display:flex;gap:6px;flex-wrap:wrap"><button class="primary" type="submit">${e ? "Guardar cambios" : "Agregar producto"}</button>
@@ -199,27 +271,27 @@ function settingsHtml() {
   const c = state.config;
   return `<form class="form" id="sform">
     <label>Nombre del negocio<input id="sName" maxlength="60" value="${esc(c.name)}"></label>
-    <label>Minutos promedio por orden<input id="sMin" type="number" min="1" max="120" value="${esc(c.minutesPerOrder)}"></label>
     <label>Símbolo de moneda<input id="sCur" maxlength="4" value="${esc(c.currency)}"></label>
-    <label class="check"><input id="sTables" type="checkbox" ${c.useTables ? "checked" : ""}> Llevo las órdenes a la mesa (pedir número de mesa)</label>
-    <label>Número de mesas<input id="sTableCount" type="number" min="1" max="200" value="${esc(c.tables)}"></label>
+    <label>Minutos por pedido chico<input id="sMinM" type="number" min="1" max="60" value="${esc(c.minMinutes)}"></label>
+    <label>Minutos por pedido grande<input id="sMaxM" type="number" min="1" max="60" value="${esc(c.maxMinutes)}"></label>
+    <label>Pedidos que preparan a la vez<input id="sCap" type="number" min="1" max="10" value="${esc(c.capacity)}"></label>
+    <label>Número de mesas<input id="sTables" type="number" min="1" max="200" value="${esc(c.tables)}"></label>
     <div><button class="primary" type="submit">Guardar ajustes</button></div>
   </form>
-  <p class="muted">El tiempo estimado que ve cada cliente es: (personas delante + 1) × minutos promedio por orden.</p>`;
+  <p class="muted">Cada pedido tarda entre el mínimo y el máximo según cuántas piezas lleva (hasta 3 piezas = mínimo; +1 minuto por cada 2 piezas más).
+  El tiempo que ve el cliente suma los pedidos que van antes que el suyo, repartidos entre los que la cocina prepara a la vez.</p>`;
 }
 
 function qrHtml() {
-  const base = location.origin + "/";
-  const tables = state.config.useTables ? Math.min(200, Math.max(1, Number(state.config.tables) || 1)) : 0;
-  let cards = `<div class="qrcard"><div class="qr" data-url="${esc(base)}"></div><strong>${esc(state.config.name)}</strong><span>Escanea para ver el menú y ordenar</span></div>`;
+  const base = location.origin;
+  const tables = Math.min(200, Math.max(0, Number(state.config.tables) || 0));
+  let cards = `<div class="qrcard"><div class="qr" data-url="${esc(base + "/llevar")}"></div><strong>Para llevar</strong><span>Escanea para pedir</span></div>`;
   for (let i = 1; i <= tables; i++) {
-    const url = base + "?mesa=" + i;
-    cards += `<div class="qrcard"><div class="qr" data-url="${esc(url)}"></div><strong>Mesa ${i}</strong><span>Escanea para ordenar</span></div>`;
+    cards += `<div class="qrcard"><div class="qr" data-url="${esc(base + "/mesa?m=" + i)}"></div><strong>Mesa ${i}</strong><span>Escanea para ordenar</span></div>`;
   }
   return `<div class="no-print" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
       <button class="primary" id="printBtn">Imprimir códigos</button>
-      <span class="muted">Enlace del menú: <code>${esc(base)}</code></span></div>
-    ${state.config.useTables ? "" : '<p class="muted no-print">¿Llevas las órdenes a la mesa? Actívalo en Ajustes y aquí aparecerá un código por mesa.</p>'}
+      <span class="muted">Cambia el número de mesas en Ajustes.</span></div>
     <div class="qrgrid">${cards}</div>`;
 }
 
@@ -238,9 +310,13 @@ async function write(fn, okMsg) {
 }
 
 function setStatus(id, status) {
+  const o = allOrders().find((x) => x.id === id);
   return write(async () => {
     const b = writeBatch(db);
-    b.update(doc(db, "orders", id), { status });
+    const patch = { status };
+    if (status !== "cancelado") patch[status + "At"] = serverTimestamp();
+    if (status === "entregado" && o && o.type === "llevar") patch.paid = true;
+    b.update(doc(db, "orders", id), patch);
     if (status === "entregado" || status === "cancelado") b.delete(doc(db, "queue", id));
     else b.update(doc(db, "queue", id), { status });
     await b.commit();
@@ -248,9 +324,26 @@ function setStatus(id, status) {
   }, status === "cancelado" ? "Pedido cancelado" : null);
 }
 
+function closeTable(tableId, method) {
+  const t = state.tables.find((x) => x.id === tableId);
+  if (!t) return;
+  const rounds = roundsOf(t);
+  const total = rounds.reduce((s, r) => s + (Number(r.total) || 0), 0);
+  return write(async () => {
+    const b = writeBatch(db);
+    b.update(doc(db, "tables", tableId), { status: "cerrada", closedAt: serverTimestamp(), total, payMethod: method, billRequested: false });
+    for (const r of rounds) {
+      const patch = { paid: true, payMethod: method };
+      if (r.status !== "entregado") { patch.status = "entregado"; patch.entregadoAt = serverTimestamp(); b.delete(doc(db, "queue", r.id)); }
+      b.update(doc(db, "orders", r.id), patch);
+    }
+    await b.commit();
+  }, `Mesa ${tableId} cobrada y cerrada`);
+}
+
 const SAMPLE = [
-  ["Tacos al pastor (3)", 75, "Platillos"], ["Quesadilla", 60, "Platillos"], ["Torta de milanesa", 90, "Platillos"],
-  ["Agua de horchata", 35, "Bebidas"], ["Refresco", 30, "Bebidas"], ["Flan", 45, "Postres"]
+  ["Taco de pastor", 22, "Tacos"], ["Taco de asada", 25, "Tacos"], ["Orden de pastor (5)", 100, "Platillos"],
+  ["Gringa", 65, "Platillos"], ["Agua de horchata", 35, "Bebidas"], ["Refresco", 30, "Bebidas"]
 ];
 
 // ---------- eventos ----------
@@ -258,10 +351,21 @@ document.addEventListener("click", (ev) => {
   const t = ev.target.closest("button"); if (!t) return;
   const d = t.dataset;
   if (d.tab) { state.tab = d.tab; state.resetForms = true; document.title = "Panel del dueño"; render(); return; }
+  if (t.id === "dayBtn") {
+    const closed = isClosed(state.config);
+    if (!closed && !t.dataset.confirm) { t.dataset.confirm = "1"; t.textContent = "¿Cerrar por hoy? Toca otra vez"; return; }
+    write(() => setDoc(doc(db, "config", "shop"), { ...state.config, closedUntil: closed ? null : Timestamp.fromDate(endOfToday()) }),
+      closed ? "Pedidos abiertos" : "Cerrado por hoy. Mañana se abre solo.");
+    return;
+  }
   if (d.advance) { setStatus(d.advance, d.to); return; }
   if (d.cancel) {
     if (!t.dataset.confirm) { t.dataset.confirm = "1"; t.textContent = "¿Seguro? Toca otra vez"; return; }
     setStatus(d.cancel, "cancelado"); return;
+  }
+  if (d.close) {
+    if (!t.dataset.confirm) { t.dataset.confirm = "1"; t.textContent = "¿Confirmas? Toca otra vez"; return; }
+    closeTable(d.close, d.method); return;
   }
   if (d.toggle) {
     const p = state.products.find((x) => x.id === d.toggle);
@@ -316,12 +420,15 @@ document.addEventListener("submit", (ev) => {
     render();
   }
   if (id === "sform") {
+    const minM = Math.min(60, Math.max(1, Number($("sMinM").value) || 5));
     const body = {
+      ...state.config,
       name: $("sName").value.trim() || "Tacos Josué",
-      minutesPerOrder: Math.min(120, Math.max(1, Number($("sMin").value) || 5)),
       currency: $("sCur").value.trim() || "$",
-      useTables: $("sTables").checked,
-      tables: Math.min(200, Math.max(1, Number($("sTableCount").value) || 1))
+      minMinutes: minM,
+      maxMinutes: Math.min(60, Math.max(minM, Number($("sMaxM").value) || 10)),
+      capacity: Math.min(10, Math.max(1, Number($("sCap").value) || 1)),
+      tables: Math.min(200, Math.max(1, Number($("sTables").value) || 1))
     };
     write(() => setDoc(doc(db, "config", "shop"), body), "Ajustes guardados");
   }
@@ -332,10 +439,10 @@ render();
 if (configured) {
   onAuthStateChanged(auth, (u) => {
     state.unsubs.forEach((f) => f()); state.unsubs = [];
-    state.user = u; state.seen = null; state.active.clear(); state.today.clear();
+    state.user = u; state.seen = null; state.active.clear(); state.today.clear(); state.tables = [];
     if (u && isOwner(u)) listen();
     render();
   });
-  // Actualiza "hace X min" cada minuto
-  setInterval(() => { if (state.user && state.tab === "pedidos") render(); }, 60000);
+  // Actualiza los minutos transcurridos cada 30 segundos
+  setInterval(() => { if (state.user && (state.tab === "pedidos" || state.tab === "mesas")) render(); }, 30000);
 }

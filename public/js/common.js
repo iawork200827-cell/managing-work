@@ -14,7 +14,46 @@ export const STATUS_LABEL = {
   entregado: "Entregado", cancelado: "Cancelado"
 };
 
-export const DEFAULT_CONFIG = { name: "Tacos Josué", minutesPerOrder: 5, currency: "$", useTables: false, tables: 10 };
+export const DEFAULT_CONFIG = {
+  name: "Tacos Josué", currency: "$", tables: 10,
+  minMinutes: 5, maxMinutes: 10, capacity: 1, closedUntil: null
+};
+
+// Minutos de preparación de un pedido según su tamaño:
+// hasta 3 piezas = mínimo; +1 min por cada 2 piezas extra; nunca más del máximo.
+export function prepMinutes(units, config = DEFAULT_CONFIG) {
+  const min = Number(config.minMinutes) || 5;
+  const max = Math.max(min, Number(config.maxMinutes) || 10);
+  const extra = Math.floor(Math.max(0, (Number(units) || 0) - 3) / 2);
+  return Math.min(max, min + extra);
+}
+
+// Tiempo estimado para un pedido: lo que falta de los pedidos de adelante
+// (repartido entre los pedidos que la cocina hace a la vez) + su propio tiempo.
+export function estimate(queue, myId, myMinutes, config = DEFAULT_CONFIG) {
+  const list = [...queue].sort((a, b) => a.createdAt - b.createdAt);
+  const idx = myId ? list.findIndex((q) => q.id === myId) : -1;
+  const ahead = idx < 0 ? list : list.slice(0, idx);
+  const cap = Math.max(1, Number(config.capacity) || 1);
+  const before = ahead.reduce((s, q) => s + (Number(q.minutes) || Number(config.minMinutes) || 5), 0) / cap;
+  return { ahead: ahead.length, minutes: Math.round(before + (Number(myMinutes) || prepMinutes(1, config))) };
+}
+
+export function isClosed(config) {
+  const until = config && config.closedUntil;
+  if (!until) return false;
+  return toMillis(until) > Date.now();
+}
+
+export function endOfToday() {
+  const d = new Date(); d.setHours(23, 59, 59, 999); return d;
+}
+
+export function newId(len = 20) {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+  const a = new Uint32Array(len); crypto.getRandomValues(a);
+  return Array.from(a, (n) => chars[n % chars.length]).join("");
+}
 
 export const $ = (id) => document.getElementById(id);
 
@@ -28,6 +67,7 @@ export function money(n, currency = "$") {
 
 export function toMillis(ts) {
   if (!ts) return Date.now();
+  if (ts instanceof Date) return ts.getTime();
   if (typeof ts.toMillis === "function") return ts.toMillis();
   return Number(ts) || Date.now();
 }

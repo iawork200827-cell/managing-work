@@ -3,24 +3,39 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Menú</title>
-  <meta name="description" content="Ordena desde tu mesa y mira cuánto falta para tu pedido.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;700&display=swap">
   <link rel="stylesheet" href="css/styles.css">
+  <title>Tacos Josué</title>
+  <meta name="description" content="Pide desde tu mesa o para llevar.">
 </head>
 <body>
   <div class="wrap">
     <header class="top">
       <div class="brand">
-        <span class="label" id="eyebrow">Menú</span>
-        <h1 id="shopName">Menú</h1>
+        <span class="label">Bienvenido</span>
+        <h1 id="shopName">Tacos Josué</h1>
       </div>
     </header>
-    <div id="notice" class="notice" hidden></div>
-    <main id="app"><p class="muted">Cargando el menú…</p></main>
+    <main class="choices">
+      <a class="choice" href="/mesa">
+        <span class="label">Estoy en el local</span>
+        <strong>Pedir en mi mesa</strong>
+        <span class="muted">Pide por rondas y platos. Pagas al final.</span>
+      </a>
+      <a class="choice" href="/llevar">
+        <span class="label">Para llevar</span>
+        <strong>Pedir para llevar</strong>
+        <span class="muted">Te avisamos cuando esté listo.</span>
+      </a>
+    </main>
   </div>
-  <div id="cartbar" class="cartbar" hidden></div>
-  <script type="module" src="js/menu.js"></script>
+  <script type="module">
+    import { db, configured } from "./js/common.js";
+    import { doc, getDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+    if (configured) getDoc(doc(db, "config", "shop")).then((s) => {
+      if (s.exists() && s.data().name) { document.getElementById("shopName").textContent = s.data().name; document.title = s.data().name; }
+    }).catch(() => {});
+  </script>
 </body>
 </html>

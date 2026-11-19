@@ -1,59 +1,124 @@
 rules_version = '2';
 
 // Reglas de seguridad de la base de datos.
-// - Los clientes (sin cuenta) solo pueden: ver el menú, crear su pedido y ver el estado de su pedido.
-// - Solo el dueño (con su correo y contraseña) puede cambiar productos, ajustes y estados de pedidos.
+// - Clientes (sin cuenta): ven el menú, abren la cuenta de su mesa, envían pedidos
+//   y ven el estado de su pedido / de su mesa.
+// - Dueño (correo y contraseña): cambia productos, ajustes, estados, cobra y cierra mesas.
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // CAMBIA ESTE CORREO por el correo de tu usuario de dueño (puedes poner varios separados por coma).
+    // Correo(s) del dueño. Debe coincidir con OWNER_EMAILS en public/js/firebase-config.js
     function isOwner() {
       return request.auth != null
         && request.auth.token.email in ['iawork200827@gmail.com'];
     }
 
-    function validOrder() {
-      let d = request.resource.data;
-      return d.keys().hasOnly(['customer', 'table', 'note', 'items', 'total', 'status', 'createdAt', 'code'])
-        && d.status == 'pendiente'
-        && d.createdAt == request.time
-        && d.customer is string && d.customer.size() > 0 && d.customer.size() <= 60
-        && d.items is list && d.items.size() > 0 && d.items.size() <= 50
-        && d.total is number && d.total >= 0
-        && d.code is string && d.code.size() <= 8
-        && (!('table' in d) || (d.table is string && d.table.size() <= 10))
-        && (!('note' in d) || (d.note is string && d.note.size() <= 200));
+    function shop() {
+      return get(/databases/$(database)/documents/config/shop).data;
     }
 
-    // Nombre del negocio, minutos por orden, etc.
+    // El dueño puede cerrar los pedidos del día: closedUntil = fin del día.
+    function shopOpen() {
+      return !exists(/databases/$(database)/documents/config/shop)
+        || !('closedUntil' in shop())
+        || shop().closedUntil == null
+        || request.time > shop().closedUntil;
+    }
+
+    function validItems(items) {
+      return items is list && items.size() > 0 && items.size() <= 60;
+    }
+
+    function validOrder() {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['type', 'customer', 'table', 'session', 'note', 'items', 'plates',
+                               'total', 'minutes', 'status', 'createdAt', 'code', 'paid'])
+        && d.status == 'pendiente'
+        && d.paid == false
+        && d.createdAt == request.time
+        && validItems(d.items)
+        && d.total is number && d.total >= 0
+        && d.minutes is number && d.minutes >= 1 && d.minutes <= 60
+        && d.code is string && d.code.size() <= 8
+        && (!('note' in d) || (d.note is string && d.note.size() <= 200))
+        && (!('plates' in d) || (d.plates is number && d.plates >= 1 && d.plates <= 20))
+        && shopOpen()
+        && (
+          // Pedido para llevar
+          (d.type == 'llevar'
+            && d.customer is string && d.customer.size() > 0 && d.customer.size() <= 60)
+          ||
+          // Ronda de una mesa: la mesa debe tener la cuenta abierta con esa sesión
+          (d.type == 'mesa'
+            && d.table is string && d.table.size() <= 10
+            && d.session is string
+            && get(/databases/$(database)/documents/tables/$(d.table)).data.status == 'abierta'
+            && get(/databases/$(database)/documents/tables/$(d.table)).data.session == d.session)
+        );
+    }
+
     match /config/{id} {
       allow read: if true;
       allow write: if isOwner();
     }
 
-    // Productos del menú
     match /products/{id} {
       allow read: if true;
       allow write: if isOwner();
     }
 
-    // Pedidos completos (nombre, productos, total).
-    // Un cliente solo puede leer SU pedido (necesita el código interno largo, imposible de adivinar).
+    // Pedidos (para llevar y rondas de mesa).
+    // - Cualquiera puede leer UN pedido si conoce su código interno (imposible de adivinar).
+    // - Las rondas de mesa se pueden listar (no llevan nombres) para mostrar la cuenta de la mesa.
+    // - Los pedidos para llevar (con nombre) solo los lista el dueño.
     match /orders/{id} {
       allow get: if true;
-      allow list, update, delete: if isOwner();
+      allow list: if isOwner() || resource.data.type == 'mesa';
       allow create: if validOrder();
+      allow update, delete: if isOwner();
     }
 
-    // Fila pública: solo hora y estado, sin nombres ni productos.
-    // Sirve para que cada cliente vea cuántas personas tiene delante.
+    // Fila pública: solo hora, estado y minutos estimados. Sin nombres ni productos.
     match /queue/{id} {
       allow read: if true;
-      allow create: if request.resource.data.keys().hasOnly(['status', 'createdAt'])
+      allow create: if request.resource.data.keys().hasOnly(['status', 'createdAt', 'minutes'])
         && request.resource.data.status == 'pendiente'
         && request.resource.data.createdAt == request.time
+        && request.resource.data.minutes is number
+        && request.resource.data.minutes >= 1 && request.resource.data.minutes <= 60
         && existsAfter(/databases/$(database)/documents/orders/$(id));
       allow update, delete: if isOwner();
+    }
+
+    // Cuenta de cada mesa. El id del documento es el número de mesa.
+    match /tables/{table} {
+      allow read: if true;
+
+      // El primer cliente abre la cuenta de la mesa.
+      allow create: if table.size() <= 10
+        && request.resource.data.keys().hasOnly(['status', 'session', 'openedAt'])
+        && request.resource.data.status == 'abierta'
+        && request.resource.data.session is string
+        && request.resource.data.session.size() >= 12 && request.resource.data.session.size() <= 40
+        && request.resource.data.openedAt == request.time
+        && shopOpen();
+
+      allow update: if isOwner()
+        // Reabrir una mesa que el dueño ya cerró (nuevos clientes), con sesión nueva
+        || (resource.data.status == 'cerrada'
+            && request.resource.data.keys().hasOnly(['status', 'session', 'openedAt'])
+            && request.resource.data.status == 'abierta'
+            && request.resource.data.session is string
+            && request.resource.data.session.size() >= 12 && request.resource.data.session.size() <= 40
+            && request.resource.data.session != resource.data.session
+            && request.resource.data.openedAt == request.time
+            && shopOpen())
+        // Pedir la cuenta
+        || (resource.data.status == 'abierta'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['billRequested'])
+            && request.resource.data.billRequested == true);
+
+      allow delete: if isOwner();
     }
   }
 }

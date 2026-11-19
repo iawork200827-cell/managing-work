@@ -1,9 +1,10 @@
 # Comanda QR: guía para ponerla en internet
 
-App para tu negocio con dos partes:
+App para tu negocio con tres versiones:
 
-- **Menú del cliente** (`tunegocio.web.app`): el cliente escanea el QR, ve el menú, pide, y ve **cuántas personas tiene delante** y el **tiempo estimado**. Se actualiza solo.
-- **Panel del dueño** (`tunegocio.web.app/panel`): ves los pedidos (Recibido → Preparando → Listo → Entregado), marcas productos como **agotados** con un toque, cambias precios, ves las ventas del día e imprimes los códigos QR.
+- **Mesa** (`/mesa?m=NÚMERO`, un QR por mesa): cuenta abierta por mesa. Piden por rondas y separan cada ronda en **platos** (Plato 1, Plato 2…) para servirlos como quieran. Todo va a una sola cuenta que se paga al final. Pueden **pedir la cuenta** desde el celular.
+- **Para llevar** (`/llevar`): pedido con nombre; el cliente ve **cuántos pedidos tiene delante** y el **tiempo estimado**. Por ahora se paga al recoger (el pago en línea se conecta cuando elijas servicio).
+- **Administrador** (`/panel`): pedidos con su tiempo (5–10 min según el tamaño) y el tiempo real que tardaron, mesas abiertas para cobrar y cerrar, productos **agotados** con un toque, botón para **cerrar pedidos por hoy** (se abre solo al día siguiente) y códigos QR para imprimir.
 
 ---
 
