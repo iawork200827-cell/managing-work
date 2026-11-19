@@ -1,10 +1,11 @@
 # Comanda QR: guía para ponerla en internet
 
-App para tu negocio con cuatro versiones:
+App para tu negocio con cinco versiones:
 
 - **Mesa** (QR de cada mesa, con clave secreta): cuenta abierta por mesa. Solo quien escanea el QR de la mesa puede abrir la cuenta; los demás de la mesa se unen con el **código de mesa** de 6 letras que aparece en el celular de quien la abrió. Piden por rondas y separan cada ronda en **platos** (Plato 1, Plato 2…) para servirlos como quieran. Todo va a una sola cuenta que se paga al final. Pueden **pedir la cuenta** desde el celular.
 - **Para llevar** (`/llevar`, en el local): pedido con nombre; el cliente ve **cuántos pedidos tiene delante** y el **tiempo estimado**. Se paga al recoger.
 - **Pedir desde casa** (`/casa`): domicilio gratis (se puede apagar) o recoger. **Se paga antes por transferencia**: el pedido no entra a cocina hasta que el dueño confirma el pago en el panel. Los datos bancarios se ponen en Panel → Ajustes.
+- **Empleados** (`/empleados`, QR de empleados + PIN): toman pedidos de mesa (abren cuentas o agregan a las abiertas), para llevar o por teléfono, cobran y cierran cuentas, confirman pagos desde casa y ven la cocina. No ven las ventas. El PIN se pone en Panel → Ajustes; al cambiarlo, todos los empleados tienen que volver a entrar.
 - **Administrador** (`/panel`): pedidos con su tiempo (5–10 min según el tamaño) y el tiempo real que tardaron, mesas abiertas para cobrar y cerrar, productos **agotados** con un toque, botón para **cerrar pedidos por hoy** (se abre solo al día siguiente) y códigos QR para imprimir.
 
 ---
@@ -91,3 +92,11 @@ firestore.rules          Reglas de seguridad   ← TU CORREO VA AQUÍ
 firebase.json            Configuración de publicación
 .firebaserc              ID del proyecto      ← TU ID VA AQUÍ
 ```
+
+## Facturas
+
+Los clientes pueden pedir factura desde su ticket o desde la cuenta de su mesa (RFC, razón social, correo, código postal, régimen fiscal y uso del CFDI). Las solicitudes aparecen en **Panel → Facturas**; cuando la hagas, toca **Marcar hecha**.
+
+## Ventas
+
+En **Panel → Ventas** ves el total del día (y de días anteriores), separado en efectivo, tarjeta y transferencia. Si algo se cobró por error, toca **Anular** y deja de sumar; **Restaurar** lo deshace.

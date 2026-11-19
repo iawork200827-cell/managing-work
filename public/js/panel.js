@@ -66,6 +66,16 @@ function listen() {
     render();
   }, onErr));
   // Claves de los QR de las mesas
+  state.unsubs.push(onSnapshot(doc(db, "staffConfig", "main"), (s) => {
+    state.staff = s.exists() ? s.data() : null;
+    render();
+  }, onErr));
+  state.unsubs.push(onSnapshot(query(collection(db, "invoices"), orderBy("createdAt", "desc")), (s) => {
+    const before = state.invoices ? new Set(state.invoices.map((i) => i.id)) : null;
+    state.invoices = s.docs.map((d) => ({ id: d.id, ...d.data() }));
+    if (before && state.invoices.some((i) => !before.has(i.id))) { toast("Nueva solicitud de factura"); beep(); }
+    render();
+  }, onErr));
   state.unsubs.push(onSnapshot(collection(db, "tableKeys"), (s) => {
     state.keys = Object.fromEntries(s.docs.map((d) => [d.id, d.data().key]));
     state.keysLoaded = true;
@@ -124,7 +134,8 @@ function render() {
   const tabs = [
     ["pedidos", `Pedidos${pend ? ` (${pend})` : ""}`],
     ["mesas", `Mesas${openTables ? ` (${openTables})` : ""}${bills ? " · cuenta" : ""}`],
-    ["ventas", "Ventas"], ["productos", "Productos"], ["ajustes", "Ajustes"], ["qr", "Códigos QR"]
+    ["ventas", "Ventas"], ["facturas", `Facturas${(state.invoices || []).filter((i) => !i.done).length ? ` (${(state.invoices || []).filter((i) => !i.done).length})` : ""}`],
+    ["productos", "Productos"], ["ajustes", "Ajustes"], ["qr", "Códigos QR"]
   ];
   const closed = isClosed(state.config);
   let html = `<div class="closed-bar no-print ${closed ? "off" : ""}">
@@ -141,6 +152,7 @@ function render() {
   if (state.tab === "ajustes") html += settingsHtml();
   if (state.tab === "qr") html += qrHtml();
   if (state.tab === "ventas") html += salesHtml();
+  if (state.tab === "facturas") html += invoicesHtml();
   app.innerHTML = html;
   if (state.tab === "qr") drawQrs();
 
@@ -234,6 +246,7 @@ function ordersHtml() {
         <div class="row"><span>${whoLabel(o)}</span><span class="price">${money(o.total, cur())}</span></div>
         ${casaInfo(o)}
         ${itemsByPlate(o.items)}
+        ${o.takenBy ? `<div class="muted" style="font-size:.8rem">Tomó: ${esc(o.takenBy)}</div>` : ""}
         ${o.note ? `<div class="notice" style="margin:0">Nota: ${esc(o.note)}</div>` : ""}
         <div class="acts"><button class="primary" data-advance="${esc(o.id)}" data-to="${to}">${label}</button>
           ${s !== "listo" ? `<button class="danger" data-cancel="${esc(o.id)}">Cancelar</button>` : ""}</div>
@@ -275,7 +288,7 @@ function tablesHtml() {
     const total = rounds.reduce((s, r) => s + (Number(r.total) || 0), 0);
     const pending = rounds.filter((r) => r.status !== "entregado").length;
     html += `<div class="order"><div class="row"><h3>Mesa ${esc(tab.table)}${perTable[tab.table] > 1 ? ` <span class="tag">${perTable[tab.table]} cuentas</span>` : ""}</h3>${tab.billRequested ? '<span class="tag bill">Pidió la cuenta</span>' : ""}</div>
-      <div class="row"><span class="muted">Cuenta <span class="mono">${esc(tab.code)}</span> · abierta ${tab.openedAt ? fmtTime(toMillis(tab.openedAt)) : ""} · ${rounds.length} ${rounds.length === 1 ? "ronda" : "rondas"}${pending ? ` · ${pending} en cocina` : ""}</span><span class="price">${money(total, cur())}</span></div>
+      <div class="row"><span class="muted">${tab.name ? `<strong>${esc(tab.name)}</strong> · ` : ""}Cuenta <span class="mono">${esc(tab.code)}</span>${tab.openedBy ? ` · abrió ${esc(tab.openedBy)}` : ""} · abierta ${tab.openedAt ? fmtTime(toMillis(tab.openedAt)) : ""} · ${rounds.length} ${rounds.length === 1 ? "ronda" : "rondas"}${pending ? ` · ${pending} en cocina` : ""}</span><span class="price">${money(total, cur())}</span></div>
       ${summaryHtml(rounds.map((r) => r.items), cur(), "Resumen de la cuenta")}
       <details><summary class="muted">Ver por ronda</summary>${rounds.map((r, i) => `<div class="round"><div class="row"><strong>Ronda ${i + 1}</strong><span class="muted">${STATUS_LABEL[r.status]}</span><span class="price">${money(r.total, cur())}</span></div>${itemsByPlate(r.items)}</div>`).join("")}</details>
       <div class="acts"><button class="primary" data-close="${esc(tab.id)}" data-method="efectivo">Cobrado en efectivo</button>
@@ -336,6 +349,7 @@ function settingsHtml() {
     <label>Banco (para pedidos desde casa)<input id="sBank" maxlength="40" value="${esc(c.bank)}" placeholder="BBVA, Banorte…"></label>
     <label>Titular de la cuenta<input id="sHolder" maxlength="60" value="${esc(c.holder)}"></label>
     <label>CLABE (18 dígitos)<input id="sClabe" maxlength="22" inputmode="numeric" value="${esc(c.clabe)}"></label>
+    <label>PIN de empleados (4 a 8 números)<input id="sPin" maxlength="8" inputmode="numeric" autocomplete="off" placeholder="${state.staff && state.staff.pin ? "••••  (escribe uno nuevo para cambiarlo)" : "Ej. 2580"}"></label>
     <div><button class="primary" type="submit">Guardar ajustes</button></div>
   </form>
   <p class="muted">Cada pedido tarda entre el mínimo y el máximo según cuántas piezas lleva (hasta 3 piezas = mínimo; +1 minuto por cada 2 piezas más).
@@ -358,12 +372,18 @@ function qrHtml() {
       <button id="printBtn">Imprimir</button>
       <span class="muted">Estos son los códigos definitivos. Cada QR de mesa tiene una clave: solo quien lo escanea en la mesa puede abrir una cuenta.</span></div>
     <div id="sheetOut" class="no-print"></div>
-    <div class="qrgrid">${cards}</div>`;
+    <div class="qrgrid">${cards}</div>
+    <h2 style="margin:24px 0 8px">QR de empleados</h2>
+    ${state.staff && state.staff.key
+      ? `<p class="muted" style="margin:0 0 10px">Solo para tu personal: al escanearlo piden su nombre y el PIN de empleados. No lo pegues en las mesas. Para guardarlo, haz una captura de pantalla.</p>
+         <div class="qrgrid"><div class="qrcard staffcard"><div class="qr" data-url="${esc(location.origin + "/empleados?k=" + state.staff.key)}"></div><strong>Empleados</strong><span>Requiere PIN</span></div></div>`
+      : `<div class="empty">Primero pon un <strong>PIN de empleados</strong> en Ajustes y aquí aparecerá el QR.</div>`}`;
 }
 
 // Arma una hoja (tamaño carta/A4) con todos los QR en una imagen que se puede guardar e imprimir
 function buildSheet() {
-  const cards = [...document.querySelectorAll(".qrcard")].filter((c) => c.querySelector(".qr canvas, .qr img"));
+  // La hoja para imprimir NO lleva el QR de empleados
+  const cards = [...document.querySelectorAll(".qrcard:not(.staffcard)")].filter((c) => c.querySelector(".qr canvas, .qr img"));
   if (!cards.length) { toast("Espera a que aparezcan los códigos"); return; }
   const W = 1240, cols = 2, cw = 560, ch = 660, gap = 40, top = 120;
   const rows = Math.ceil(cards.length / cols);
@@ -420,6 +440,24 @@ function drawQrs() {
     if (window.QRCode) new QRCode(el, { text: el.dataset.url, width: 160, height: 160, colorDark: "#111111", colorLight: "#ffffff", correctLevel: QRCode.CorrectLevel.M });
     else el.textContent = el.dataset.url;
   });
+}
+
+// ---------- solicitudes de factura ----------
+function invoicesHtml() {
+  const list = state.invoices || [];
+  if (!list.length) return '<div class="empty">Todavía no hay solicitudes de factura. Los clientes la piden desde su ticket o la cuenta de su mesa.</div>';
+  let html = '<div class="plist">';
+  for (const i of list) {
+    const when = i.createdAt ? new Date(toMillis(i.createdAt)).toLocaleString([], { dateStyle: "short", timeStyle: "short" }) : "";
+    html += `<div class="prow ${i.done ? "voided" : ""}"><div>
+        <div><strong>${esc(i.razon)}</strong> · <span class="mono">${esc(i.rfc)}</span> ${i.done ? '<span class="tag casa">Hecha</span>' : '<span class="tag">Pendiente</span>'}</div>
+        <div class="muted" style="font-size:.85rem">${i.kind === "cuenta" ? "Mesa " + esc(i.table || "") + " · cuenta " : "Pedido #"}<span class="mono">${esc(i.code || "")}</span> · ${esc(when)}</div>
+        <div style="font-size:.85rem">Correo: <span class="mono">${esc(i.email)}</span> · C.P. <span class="mono">${esc(i.cp)}</span></div>
+        <div class="muted" style="font-size:.85rem">Régimen: ${esc(i.regimen)} · Uso CFDI: ${esc(i.uso)}</div></div>
+      <div class="acts"><span class="price">${money(i.total, cur())}</span>
+        <button data-invoice="${esc(i.id)}" data-done="${i.done ? "0" : "1"}">${i.done ? "Marcar pendiente" : "Marcar hecha"}</button></div></div>`;
+  }
+  return html + "</div>";
 }
 
 // ---------- ventas del día (con anular / restaurar) ----------
@@ -604,6 +642,7 @@ document.addEventListener("click", (ev) => {
     voidSale(d.void, false); return;
   }
   if (d.restore) { voidSale(d.restore, true); return; }
+  if (d.invoice) { write(() => updateDoc(doc(db, "invoices", d.invoice), { done: d.done === "1" }), d.done === "1" ? "Factura marcada como hecha" : null); return; }
   if (d.confirmpay) {
     const o = allOrders().find((x) => x.id === d.confirmpay);
     if (!o) return;
@@ -719,7 +758,13 @@ document.addEventListener("submit", (ev) => {
       clabe: $("sClabe").value.replace(/\s/g, "")
     };
     if (body.clabe && !/^\d{18}$/.test(body.clabe)) { toast("La CLABE debe tener 18 dígitos"); return; }
-    write(() => setDoc(doc(db, "config", "shop"), body), "Ajustes guardados");
+    const pin = $("sPin").value.trim();
+    if (pin && !/^\d{4,8}$/.test(pin)) { toast("El PIN debe tener de 4 a 8 números"); return; }
+    write(async () => {
+      await setDoc(doc(db, "config", "shop"), body);
+      // Cambiar el PIN saca a todos los empleados; el QR de empleados no cambia
+      if (pin) await setDoc(doc(db, "staffConfig", "main"), { pin, key: (state.staff && state.staff.key) || newId(16) });
+    }, pin ? "Ajustes y PIN de empleados guardados" : "Ajustes guardados");
   }
 });
 
@@ -729,7 +774,7 @@ if (configured) {
   onAuthStateChanged(auth, (u) => {
     state.unsubs.forEach((f) => f()); state.unsubs = [];
     state.user = u; state.seen = null; state.active.clear(); state.today.clear(); state.tables = [];
-    state.secrets = {}; state.tabsOpen = {}; state.keys = {}; state.keysLoaded = false;
+    state.secrets = {}; state.tabsOpen = {}; state.keys = {}; state.keysLoaded = false; state.staff = null; state.invoices = null;
     if (u && isOwner(u)) listen();
     render();
   });

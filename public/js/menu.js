@@ -3,7 +3,7 @@
 //  - llevar.html → pedido para llevar en el local, con fila y tiempo estimado; se paga al recoger.
 //  - casa.html   → pedido desde casa (domicilio o recoger); se paga antes por transferencia.
 import {
-  collection, doc, onSnapshot, query, where, writeBatch, setDoc, getDoc, updateDoc, serverTimestamp
+  collection, doc, onSnapshot, query, where, writeBatch, setDoc, getDoc, updateDoc, addDoc, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import {
   db, configured, $, esc, money, toMillis, local, toast, notConfiguredHtml,
@@ -49,6 +49,9 @@ const state = {
   tab: null,        // la cuenta de este celular (si tiene)
   rounds: [],
   joinCode: "",
+  tabName: local.get("comanda.name") || "",
+  invoiceOpen: false,
+  inv: { rfc: "", razon: "", email: "", cp: "", regimen: "", uso: "G03 - Gastos en general" },
   mySession: tableParam ? local.get("comanda.session." + tableParam) : null
 };
 
@@ -185,6 +188,7 @@ function takeoutTicket(o) {
     ${o.status === "por_pagar" ? "" : `<div class="full">${statusSteps(o.status)}</div>`}
     <div class="full">${summaryHtml([o.items], cur(), "Tu pedido")}
       <div class="muted" style="margin-top:6px">${payNote}${o.type === "casa" ? (o.delivery === "domicilio" ? " · A domicilio" : " · Pasas a recoger") : ""}</div></div>
+    ${o.status !== "por_pagar" && o.status !== "cancelado" ? `<div class="full">${invoiceHtml(o.id)}</div>` : ""}
     ${done ? `<div class="full"><button data-neworder>Hacer otro pedido</button></div>` : ""}
   </div>`;
 }
@@ -215,9 +219,51 @@ function chooseTab() {
     <div class="full" style="border-top:1px solid var(--line);padding-top:12px">
       ${state.tableKey
         ? `<p class="muted" style="margin:0 0 8px">¿Es la primera cuenta de la mesa o quieren <strong>pagar aparte</strong>? Abre una cuenta nueva y comparte su código.</p>
-           <button data-newtab>Abrir cuenta nueva</button>`
+           <div style="display:flex;gap:8px;flex-wrap:wrap"><input id="tabName" maxlength="40" autocomplete="name" placeholder="Tu nombre (opcional)" style="flex:1 1 160px;width:auto" value="${esc(state.tabName)}">
+           <button data-newtab>Abrir cuenta nueva</button></div>`
         : `<p class="muted" style="margin:0">Para abrir una cuenta nueva, <strong>escanea el código QR que está en tu mesa</strong>.</p>`}
     </div></div>`;
+}
+
+// ---------- factura ----------
+const REGIMENES = ["601 - General de Ley Personas Morales", "603 - Personas Morales con Fines no Lucrativos", "605 - Sueldos y Salarios",
+  "606 - Arrendamiento", "612 - Personas Físicas con Actividades Empresariales y Profesionales", "616 - Sin obligaciones fiscales",
+  "621 - Incorporación Fiscal", "626 - Régimen Simplificado de Confianza"];
+const USOS = ["G03 - Gastos en general", "G01 - Adquisición de mercancías", "S01 - Sin efectos fiscales", "CP01 - Pagos"];
+const invoiceKey = (ref) => "comanda.factura." + ref;
+
+function invoiceHtml(ref) {
+  if (local.get(invoiceKey(ref))) return `<div class="notice" style="margin:0">Ya pediste factura de esta cuenta. Te llegará al correo que nos diste.</div>`;
+  if (!state.invoiceOpen) return `<button data-invoiceopen>Pedir factura</button>`;
+  const i = state.inv;
+  return `<form id="invForm" class="form" style="margin:0;grid-column:1/-1">
+    <h3 style="grid-column:1/-1;margin:0">Datos para tu factura</h3>
+    <label>RFC<input id="invRfc" required maxlength="13" autocapitalize="characters" style="text-transform:uppercase" value="${esc(i.rfc)}"></label>
+    <label>Nombre o razón social<input id="invRazon" required maxlength="150" value="${esc(i.razon)}"></label>
+    <label>Correo<input id="invEmail" required type="email" maxlength="120" value="${esc(i.email)}"></label>
+    <label>Código postal fiscal<input id="invCp" required inputmode="numeric" maxlength="5" value="${esc(i.cp)}"></label>
+    <label>Régimen fiscal<select id="invRegimen" required><option value="">Elige…</option>${REGIMENES.map((r) => `<option ${r === i.regimen ? "selected" : ""}>${esc(r)}</option>`).join("")}</select></label>
+    <label>Uso del CFDI<select id="invUso">${USOS.map((u) => `<option ${u === i.uso ? "selected" : ""}>${esc(u)}</option>`).join("")}</select></label>
+    <div style="grid-column:1/-1;display:flex;gap:8px;flex-wrap:wrap"><button class="primary" type="submit">Enviar datos</button><button type="button" data-invoiceclose>Cancelar</button></div>
+  </form>`;
+}
+
+async function sendInvoice(ref, kind, total, code) {
+  const i = state.inv;
+  const rfc = i.rfc.trim().toUpperCase();
+  if (!/^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}$/.test(rfc)) { toast("Revisa el RFC (12 o 13 caracteres)"); $("invRfc")?.focus(); return; }
+  if (!/^\d{5}$/.test(i.cp.trim())) { toast("El código postal tiene 5 números"); $("invCp")?.focus(); return; }
+  if (!i.regimen) { toast("Elige tu régimen fiscal"); return; }
+  try {
+    const data = { ref, kind, code: code || "", rfc, razon: i.razon.trim().slice(0, 150), email: i.email.trim().slice(0, 120), cp: i.cp.trim(),
+      regimen: i.regimen, uso: i.uso, total: Number(total) || 0, createdAt: serverTimestamp(), done: false };
+    if (kind === "cuenta") data.table = state.table;
+    await addDoc(collection(db, "invoices"), data);
+    local.set(invoiceKey(ref), "1");
+    state.invoiceOpen = false;
+    toast("Listo, recibimos tus datos para la factura");
+    render();
+  } catch (e) { console.error(e); toast("No se pudo enviar. Revisa los datos e intenta otra vez."); }
 }
 
 function tabTicket(t) {
@@ -245,6 +291,7 @@ function tabTicket(t) {
   html += `<div class="full" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">`;
   if (rounds.length) html += t.billRequested ? `<span class="tag">Ya pediste la cuenta. En un momento te atienden.</span>` : `<button data-bill>Pedir la cuenta</button>`;
   html += `<button data-leavetab>Pedir en una cuenta aparte</button></div>`;
+  if (rounds.length) html += `<div class="full">${invoiceHtml(state.mySession)}</div>`;
   return html + `</div>`;
 }
 
@@ -282,7 +329,18 @@ function tablePicker() {
 }
 
 // ---------- render ----------
+// Al redibujar, el campo donde el cliente está escribiendo conserva el foco
 function render() {
+  const focusId = document.activeElement && document.activeElement.id;
+  renderInner();
+  const el = focusId && $(focusId);
+  if (el && (el.tagName === "INPUT" || el.tagName === "SELECT") && document.activeElement !== el) {
+    el.focus();
+    try { if (el.tagName === "INPUT" && el.type !== "email") el.setSelectionRange(el.value.length, el.value.length); } catch (e) {}
+  }
+}
+
+function renderInner() {
   const name = state.config.name || "Menú";
   $("shopName").textContent = name;
   document.title = name + ({ mesa: " · Mesa", llevar: " · Para llevar", casa: " · Pedir desde casa" })[MODE];
@@ -381,7 +439,9 @@ async function openNewTab() {
   const code = newCode();
   const b = writeBatch(db);
   b.set(doc(db, "tabSecrets", session), { table: state.table, key: state.tableKey, openedAt: serverTimestamp() });
-  b.set(doc(db, "tabs", session), { table: state.table, openedAt: serverTimestamp(), code, closed: false, billRequested: false });
+  const tab = { table: state.table, openedAt: serverTimestamp(), code, closed: false, billRequested: false };
+  if (state.tabName.trim()) tab.name = state.tabName.trim().slice(0, 40);
+  b.set(doc(db, "tabs", session), tab);
   b.set(doc(db, "joins", state.table + "-" + code), { session, table: state.table, createdAt: serverTimestamp() });
   try { await b.commit(); }
   catch (e) { console.error(e); const err = new Error("badkey"); err.code = closed() ? "closed" : "badkey"; throw err; }
@@ -548,6 +608,8 @@ document.addEventListener("click", (ev) => {
     return;
   }
   if ("neworder" in d) { watchMyOrder(null); return; }
+  if ("invoiceopen" in d) { state.invoiceOpen = true; render(); $("invRfc")?.focus(); return; }
+  if ("invoiceclose" in d) { state.invoiceOpen = false; render(); return; }
   if ("newtab" in d) {
     openNewTab().then(() => toast("Cuenta nueva abierta. Comparte su código con quien pida contigo."),
       (e) => toast(e.code === "closed" ? "Hoy ya no estamos recibiendo pedidos" : "No se pudo abrir la cuenta. Escanea otra vez el QR de la mesa."));
@@ -573,10 +635,21 @@ document.addEventListener("input", (ev) => {
   if (id === "custAddr") state.address = ev.target.value;
   if (id === "payRef") state.payRef = ev.target.value;
   if (id === "joinCode") state.joinCode = ev.target.value;
+  if (id === "tabName") state.tabName = ev.target.value;
+  const invMap = { invRfc: "rfc", invRazon: "razon", invEmail: "email", invCp: "cp", invRegimen: "regimen", invUso: "uso" };
+  if (invMap[id]) state.inv[invMap[id]] = ev.target.value;
 });
 document.addEventListener("submit", (ev) => {
   if (ev.target.id === "casaForm") { ev.preventDefault(); placeOrder(); return; }
   if (ev.target.id === "joinForm") { ev.preventDefault(); joinTable(state.joinCode); return; }
+  if (ev.target.id === "invForm") {
+    ev.preventDefault();
+    if (MODE === "mesa") {
+      const rounds = state.rounds.filter((r) => r.status !== "cancelado");
+      sendInvoice(state.mySession, "cuenta", rounds.reduce((s, r) => s + (Number(r.total) || 0), 0), state.tab && state.tab.code);
+    } else if (state.myOrder) sendInvoice(state.myOrder.id, "pedido", state.myOrder.total, state.myOrder.code);
+    return;
+  }
   if (ev.target.id === "payForm") {
     ev.preventDefault();
     const ref = state.payRef.trim().slice(0, 60);

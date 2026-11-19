@@ -3,7 +3,9 @@ rules_version = '2';
 // Reglas de seguridad de la base de datos.
 // - Clientes (sin cuenta): ven el menú, abren la cuenta de su mesa, envían pedidos
 //   (mesa, para llevar o desde casa) y ven el estado de su pedido / de su mesa.
-// - Dueño (correo y contraseña): cambia productos, ajustes, estados, cobra y cierra mesas.
+// - Empleados (QR de empleados + PIN): toman pedidos, abren y cobran cuentas, ven la cocina.
+//   No ven ventas ni pedidos terminados, ni cambian productos o ajustes.
+// - Dueño (correo y contraseña): todo lo anterior + productos, ajustes, ventas y anulaciones.
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -12,6 +14,16 @@ service cloud.firestore {
       return request.auth != null
         && request.auth.token.email in ['iawork200827@gmail.com'];
     }
+
+    // Empleado: entró con el QR de empleados y el PIN vigente (si el dueño cambia el PIN, deja de valer)
+    function isStaff() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/staffSessions/$(request.auth.uid))
+        && exists(/databases/$(database)/documents/staffConfig/main)
+        && get(/databases/$(database)/documents/staffSessions/$(request.auth.uid)).data.pin
+           == get(/databases/$(database)/documents/staffConfig/main).data.pin;
+    }
+    function isTeam() { return isOwner() || isStaff(); }
 
     function shop() {
       return get(/databases/$(database)/documents/config/shop).data;
@@ -32,7 +44,8 @@ service cloud.firestore {
     function validOrder() {
       let d = request.resource.data;
       return d.keys().hasOnly(['type', 'customer', 'phone', 'delivery', 'address', 'table', 'session', 'note',
-                               'items', 'plates', 'total', 'minutes', 'status', 'createdAt', 'code', 'paid'])
+                               'items', 'plates', 'total', 'minutes', 'status', 'createdAt', 'code', 'paid', 'takenBy'])
+        && (!('takenBy' in d) || (d.takenBy is string && d.takenBy.size() <= 40 && isStaff()))
         && d.paid == false
         && d.createdAt == request.time
         && validItems(d.items)
@@ -45,7 +58,8 @@ service cloud.firestore {
         && (
           // Para llevar en el local: entra directo a cocina y se paga al recoger
           (d.type == 'llevar' && d.status == 'pendiente'
-            && d.customer is string && d.customer.size() > 0 && d.customer.size() <= 60)
+            && d.customer is string && d.customer.size() > 0 && d.customer.size() <= 60
+            && (!('phone' in d) || (d.phone is string && d.phone.size() <= 20)))
           ||
           // Ronda de una mesa: el celular debe conocer la sesión secreta de una cuenta abierta
           // de esa mesa (la abrió con el QR o se unió con el código)
@@ -82,9 +96,16 @@ service cloud.firestore {
     // - Solo el dueño puede listarlos. La cuenta de cada mesa se ve en tabs/{sesión}/rounds.
     match /orders/{id} {
       allow get: if true;
-      allow list: if isOwner();
+      // Empleados: solo ven los pedidos en curso (no los terminados, así no ven lo que se va ganando)
+      allow list: if isOwner()
+        || (isStaff() && resource.data.status in ['por_pagar', 'pendiente', 'preparando', 'listo']);
       allow create: if validOrder();
       allow update: if isOwner()
+        // Empleado: avanzar en cocina, cancelar, confirmar pago y cobrar
+        || (isStaff()
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['status', 'preparandoAt', 'listoAt', 'entregadoAt', 'confirmedAt', 'paid', 'payMethod', 'cancelledBy', 'handledBy'])
+            && request.resource.data.status in ['pendiente', 'preparando', 'listo', 'entregado', 'cancelado'])
         // El cliente de casa avisa que ya transfirió (solo escribe su referencia)
         || (resource.data.type == 'casa' && resource.data.status == 'por_pagar'
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['payRef'])
@@ -103,7 +124,7 @@ service cloud.firestore {
         && request.resource.data.minutes >= 1 && request.resource.data.minutes <= 60
         // Solo pedidos que ya van a cocina (los de casa, hasta que se confirma el pago)
         && getAfter(/databases/$(database)/documents/orders/$(id)).data.status == 'pendiente';
-      allow update, delete: if isOwner();
+      allow update, delete: if isTeam();
     }
 
     // ---------------- Mesas ----------------
@@ -125,9 +146,14 @@ service cloud.firestore {
             && request.resource.data.keys().hasOnly(['table', 'key', 'openedAt'])
             && request.resource.data.table is string && request.resource.data.table.size() <= 10
             && request.resource.data.openedAt == request.time
-            && exists(/databases/$(database)/documents/tableKeys/$(request.resource.data.table))
-            && request.resource.data.key == get(/databases/$(database)/documents/tableKeys/$(request.resource.data.table)).data.key
-            && shopOpen());
+            && shopOpen()
+            && (
+              // Cliente: con la clave del QR de la mesa
+              (exists(/databases/$(database)/documents/tableKeys/$(request.resource.data.table))
+                && request.resource.data.key == get(/databases/$(database)/documents/tableKeys/$(request.resource.data.table)).data.key)
+              // Empleado: puede abrir cuentas en cualquier mesa
+              || (request.resource.data.key == 'staff' && isStaff())
+            ));
     }
 
     // Versión anterior (una cuenta por mesa). Solo lectura para clientes; el dueño las limpia.
@@ -141,8 +167,10 @@ service cloud.firestore {
 
     match /tabs/{session} {
       allow get: if true;
-      allow list: if isOwner();
-      allow create: if request.resource.data.keys().hasOnly(['table', 'openedAt', 'code', 'closed', 'billRequested'])
+      allow list: if isTeam();
+      allow create: if request.resource.data.keys().hasOnly(['table', 'openedAt', 'code', 'closed', 'billRequested', 'name', 'openedBy'])
+        && (!('name' in request.resource.data) || (request.resource.data.name is string && request.resource.data.name.size() <= 40))
+        && (!('openedBy' in request.resource.data) || (request.resource.data.openedBy is string && request.resource.data.openedBy.size() <= 40))
         && request.resource.data.table is string
         && request.resource.data.openedAt == request.time
         && request.resource.data.code is string && request.resource.data.code.size() == 6
@@ -151,6 +179,9 @@ service cloud.firestore {
         && getAfter(/databases/$(database)/documents/tabSecrets/$(session)).data.table == request.resource.data.table
         && getAfter(/databases/$(database)/documents/tabSecrets/$(session)).data.openedAt == request.time;
       allow update: if isOwner()
+        // Empleado: cobrar y cerrar la cuenta
+        || (isStaff() && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['closed', 'billRequested', 'total', 'payMethod', 'closedAt', 'closedBy']))
         // Pedir la cuenta
         || (resource.data.closed == false
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['billRequested'])
@@ -165,7 +196,8 @@ service cloud.firestore {
           && request.resource.data.createdAt == request.time
           && getAfter(/databases/$(database)/documents/orders/$(id)).data.session == session
           && getAfter(/databases/$(database)/documents/orders/$(id)).data.total == request.resource.data.total;
-        allow update, delete: if isOwner();
+        allow update: if isTeam();
+        allow delete: if isOwner();
       }
     }
 
@@ -179,6 +211,41 @@ service cloud.firestore {
         && id.split('-')[0] == request.resource.data.table
         && getAfter(/databases/$(database)/documents/tabSecrets/$(request.resource.data.session)).data.table == request.resource.data.table;
       allow update, delete: if isOwner();
+    }
+
+    // ---------------- Empleados ----------------
+    // staffConfig/main: { pin, key } — solo el dueño. El QR de empleados lleva la key.
+    match /staffConfig/{id} {
+      allow read, write: if isOwner();
+    }
+    // staffSessions/{uid}: el empleado entra con el QR (key) + PIN. Si el dueño cambia el PIN, deja de valer.
+    match /staffSessions/{uid} {
+      allow read: if isOwner() || (request.auth != null && request.auth.uid == uid);
+      allow create, update: if request.auth != null && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['pin', 'key', 'name', 'createdAt'])
+        && request.resource.data.name is string && request.resource.data.name.size() >= 1 && request.resource.data.name.size() <= 40
+        && request.resource.data.createdAt == request.time
+        && exists(/databases/$(database)/documents/staffConfig/main)
+        && request.resource.data.pin == get(/databases/$(database)/documents/staffConfig/main).data.pin
+        && request.resource.data.key == get(/databases/$(database)/documents/staffConfig/main).data.key;
+      allow delete: if isOwner() || (request.auth != null && request.auth.uid == uid);
+    }
+
+    // ---------------- Facturas ----------------
+    match /invoices/{id} {
+      allow read, update, delete: if isOwner();
+      allow create: if request.resource.data.keys().hasOnly(['ref', 'kind', 'table', 'code', 'rfc', 'razon', 'email', 'cp', 'regimen', 'uso', 'total', 'createdAt', 'done'])
+        && request.resource.data.kind in ['pedido', 'cuenta']
+        && request.resource.data.ref is string && request.resource.data.ref.size() <= 40
+        && request.resource.data.rfc is string && request.resource.data.rfc.size() >= 12 && request.resource.data.rfc.size() <= 13
+        && request.resource.data.razon is string && request.resource.data.razon.size() >= 1 && request.resource.data.razon.size() <= 150
+        && request.resource.data.email is string && request.resource.data.email.matches('^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$')
+        && request.resource.data.cp is string && request.resource.data.cp.matches('^[0-9]{5}$')
+        && request.resource.data.regimen is string && request.resource.data.regimen.size() <= 80
+        && request.resource.data.uso is string && request.resource.data.uso.size() <= 80
+        && request.resource.data.total is number
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.done == false;
     }
   }
 }

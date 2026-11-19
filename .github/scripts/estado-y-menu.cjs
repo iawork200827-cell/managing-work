@@ -22,6 +22,25 @@ const db = admin.firestore();
     } catch (e2) { console.log("No se pudo listar usuarios: " + (e2.code || e2.message)); }
   }
 
+  // Los empleados entran de forma anónima (con QR + PIN): hay que tener activado ese tipo de acceso
+  try {
+    const token = (await admin.credential.applicationDefault().getAccessToken()).access_token;
+    const base = `https://identitytoolkit.googleapis.com/admin/v2/projects/${process.env.PROJECT_ID}/config`;
+    const cur = await fetch(base, { headers: { Authorization: "Bearer " + token } }).then((r) => r.json());
+    const anon = cur && cur.signIn && cur.signIn.anonymous && cur.signIn.anonymous.enabled;
+    if (anon) console.log("Acceso de empleados (anónimo): activado");
+    else {
+      const r = await fetch(base + "?updateMask=signIn.anonymous.enabled", {
+        method: "PATCH", headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+        body: JSON.stringify({ signIn: { anonymous: { enabled: true } } })
+      });
+      console.log(r.ok ? "Acceso de empleados (anónimo): lo activé" : "No pude activar el acceso de empleados: " + r.status + " " + (await r.text()).slice(0, 200));
+    }
+  } catch (e) { console.log("No pude revisar el acceso de empleados: " + e.message); }
+
+  const staff = await db.doc("staffConfig/main").get();
+  console.log("PIN de empleados: " + (staff.exists && staff.data().pin ? "configurado" : "falta (ponlo en Panel → Ajustes)"));
+
   const cfg = await db.doc("config/shop").get();
   if (cfg.exists) {
     const c = cfg.data();

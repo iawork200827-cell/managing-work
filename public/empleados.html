@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Empleados</title>
+  <meta name="robots" content="noindex">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;700&display=swap">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <div class="wrap">
+    <header class="top">
+      <div class="brand">
+        <span class="label">Modo empleado</span>
+        <h1 id="shopName">Tacos Josué</h1>
+      </div>
+      <div id="who" hidden style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <span class="muted">Empleado: <strong id="whoName"></strong></span>
+        <button id="logoutBtn">Salir</button>
+      </div>
+    </header>
+    <div id="notice" class="notice" hidden></div>
+    <main id="app"><p class="muted">Cargando…</p></main>
+  </div>
+  <div id="cartbar" class="cartbar" hidden></div>
+  <script type="module" src="js/staff.js"></script>
+</body>
+</html>
