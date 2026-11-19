@@ -47,12 +47,13 @@ service cloud.firestore {
           (d.type == 'llevar' && d.status == 'pendiente'
             && d.customer is string && d.customer.size() > 0 && d.customer.size() <= 60)
           ||
-          // Ronda de una mesa: la mesa debe tener la cuenta abierta con esa sesión
+          // Ronda de una mesa: la mesa debe tener la cuenta abierta y el celular debe
+          // conocer la sesión secreta de esa cuenta (la abrió o se unió con el código de mesa)
           (d.type == 'mesa' && d.status == 'pendiente'
             && d.table is string && d.table.size() <= 10
             && d.session is string
             && get(/databases/$(database)/documents/tables/$(d.table)).data.status == 'abierta'
-            && get(/databases/$(database)/documents/tables/$(d.table)).data.session == d.session)
+            && get(/databases/$(database)/documents/tableSecrets/$(d.table)).data.session == d.session)
           ||
           // Pedido desde casa: queda "por pagar" hasta que el dueño confirma la transferencia
           (d.type == 'casa' && d.status == 'por_pagar'
@@ -76,13 +77,12 @@ service cloud.firestore {
       allow write: if isOwner();
     }
 
-    // Pedidos (para llevar y rondas de mesa).
+    // Pedidos (mesa, para llevar y desde casa).
     // - Cualquiera puede leer UN pedido si conoce su código interno (imposible de adivinar).
-    // - Las rondas de mesa se pueden listar (no llevan nombres) para mostrar la cuenta de la mesa.
-    // - Los pedidos para llevar (con nombre) solo los lista el dueño.
+    // - Solo el dueño puede listarlos. La cuenta de cada mesa se ve en tabs/{sesión}/rounds.
     match /orders/{id} {
       allow get: if true;
-      allow list: if isOwner() || resource.data.type == 'mesa';
+      allow list: if isOwner();
       allow create: if validOrder();
       allow update: if isOwner()
         // El cliente de casa avisa que ya transfirió (solo escribe su referencia)
@@ -106,35 +106,85 @@ service cloud.firestore {
       allow update, delete: if isOwner();
     }
 
-    // Cuenta de cada mesa. El id del documento es el número de mesa.
+    // ---------------- Mesas ----------------
+    // tableKeys/{mesa}:    clave secreta que va en el QR impreso de cada mesa (solo el dueño la ve).
+    // tableSecrets/{mesa}: sesión secreta de la cuenta abierta (nadie la lee salvo el dueño).
+    // tables/{mesa}:       estado público (abierta / cerrada).
+    // tabs/{sesión}:       la cuenta; solo la ve quien conoce la sesión. rounds/ = sus rondas.
+    // joins/{mesa}-{código}: permite a los demás de la mesa unirse con el código de 6 letras.
+
+    match /tableKeys/{table} {
+      allow read, write: if isOwner();
+    }
+
+    match /tableSecrets/{table} {
+      allow read: if isOwner();
+      allow write: if isOwner()
+        // Abrir la cuenta: hay que tener la clave del QR de la mesa y la mesa debe estar libre
+        || (request.resource.data.keys().hasOnly(['session', 'key', 'openedAt'])
+            && request.resource.data.session is string
+            && request.resource.data.session.size() >= 20 && request.resource.data.session.size() <= 40
+            && request.resource.data.openedAt == request.time
+            && exists(/databases/$(database)/documents/tableKeys/$(table))
+            && request.resource.data.key == get(/databases/$(database)/documents/tableKeys/$(table)).data.key
+            && (!exists(/databases/$(database)/documents/tables/$(table))
+                || get(/databases/$(database)/documents/tables/$(table)).data.status == 'cerrada')
+            && getAfter(/databases/$(database)/documents/tables/$(table)).data.status == 'abierta'
+            && shopOpen());
+    }
+
     match /tables/{table} {
       allow read: if true;
-
-      // El primer cliente abre la cuenta de la mesa.
-      allow create: if table.size() <= 10
-        && request.resource.data.keys().hasOnly(['status', 'session', 'openedAt'])
-        && request.resource.data.status == 'abierta'
-        && request.resource.data.session is string
-        && request.resource.data.session.size() >= 12 && request.resource.data.session.size() <= 40
-        && request.resource.data.openedAt == request.time
-        && shopOpen();
-
-      allow update: if isOwner()
-        // Reabrir una mesa que el dueño ya cerró (nuevos clientes), con sesión nueva
-        || (resource.data.status == 'cerrada'
-            && request.resource.data.keys().hasOnly(['status', 'session', 'openedAt'])
+      allow create, update: if isOwner()
+        || (table.size() <= 10
+            && request.resource.data.keys().hasOnly(['status', 'openedAt'])
             && request.resource.data.status == 'abierta'
-            && request.resource.data.session is string
-            && request.resource.data.session.size() >= 12 && request.resource.data.session.size() <= 40
-            && request.resource.data.session != resource.data.session
             && request.resource.data.openedAt == request.time
-            && shopOpen())
+            && (resource == null || resource.data.status == 'cerrada')
+            // Solo junto con una sesión nueva creada con la clave del QR
+            && getAfter(/databases/$(database)/documents/tableSecrets/$(table)).data.openedAt == request.time);
+      allow delete: if isOwner();
+    }
+
+    match /tabs/{session} {
+      allow get: if true;
+      allow list: if isOwner();
+      allow create: if request.resource.data.keys().hasOnly(['table', 'openedAt', 'code', 'closed', 'billRequested'])
+        && request.resource.data.table is string
+        && request.resource.data.openedAt == request.time
+        && request.resource.data.code is string && request.resource.data.code.size() == 6
+        && request.resource.data.closed == false
+        && request.resource.data.billRequested == false
+        && getAfter(/databases/$(database)/documents/tableSecrets/$(request.resource.data.table)).data.session == session;
+      allow update: if isOwner()
         // Pedir la cuenta
-        || (resource.data.status == 'abierta'
+        || (resource.data.closed == false
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['billRequested'])
             && request.resource.data.billRequested == true);
-
       allow delete: if isOwner();
+
+      // Copia de cada ronda para que la mesa vea su cuenta
+      match /rounds/{id} {
+        allow read: if true;
+        allow create: if request.resource.data.keys().hasOnly(['items', 'total', 'status', 'createdAt', 'minutes', 'plates'])
+          && request.resource.data.status == 'pendiente'
+          && request.resource.data.createdAt == request.time
+          && getAfter(/databases/$(database)/documents/orders/$(id)).data.session == session
+          && getAfter(/databases/$(database)/documents/orders/$(id)).data.total == request.resource.data.total;
+        allow update, delete: if isOwner();
+      }
+    }
+
+    // Código de mesa para que los demás se unan a la cuenta. Id: "{mesa}-{CÓDIGO}"
+    match /joins/{id} {
+      allow get: if true;
+      allow list: if isOwner();
+      allow create: if request.resource.data.keys().hasOnly(['session', 'table', 'createdAt'])
+        && request.resource.data.createdAt == request.time
+        && id.matches('^[0-9A-Za-z]{1,10}-[A-Z0-9]{6}$')
+        && id.split('-')[0] == request.resource.data.table
+        && getAfter(/databases/$(database)/documents/tableSecrets/$(request.resource.data.table)).data.session == request.resource.data.session;
+      allow update, delete: if isOwner();
     }
   }
 }

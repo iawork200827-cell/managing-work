@@ -2,7 +2,7 @@
 
 App para tu negocio con cuatro versiones:
 
-- **Mesa** (`/mesa?m=NÚMERO`, un QR por mesa): cuenta abierta por mesa. Piden por rondas y separan cada ronda en **platos** (Plato 1, Plato 2…) para servirlos como quieran. Todo va a una sola cuenta que se paga al final. Pueden **pedir la cuenta** desde el celular.
+- **Mesa** (QR de cada mesa, con clave secreta): cuenta abierta por mesa. Solo quien escanea el QR de la mesa puede abrir la cuenta; los demás de la mesa se unen con el **código de mesa** de 6 letras que aparece en el celular de quien la abrió. Piden por rondas y separan cada ronda en **platos** (Plato 1, Plato 2…) para servirlos como quieran. Todo va a una sola cuenta que se paga al final. Pueden **pedir la cuenta** desde el celular.
 - **Para llevar** (`/llevar`, en el local): pedido con nombre; el cliente ve **cuántos pedidos tiene delante** y el **tiempo estimado**. Se paga al recoger.
 - **Pedir desde casa** (`/casa`): domicilio gratis (se puede apagar) o recoger. **Se paga antes por transferencia**: el pedido no entra a cocina hasta que el dueño confirma el pago en el panel. Los datos bancarios se ponen en Panel → Ajustes.
 - **Administrador** (`/panel`): pedidos con su tiempo (5–10 min según el tamaño) y el tiempo real que tardaron, mesas abiertas para cobrar y cerrar, productos **agotados** con un toque, botón para **cerrar pedidos por hoy** (se abre solo al día siguiente) y códigos QR para imprimir.

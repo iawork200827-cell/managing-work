@@ -35,6 +35,18 @@ const db = admin.firestore();
   const tables = await db.collection("tables").count().get();
   console.log(`Pedidos guardados: ${orders.data().count} · Mesas con cuenta: ${tables.data().count}`);
 
+  // Mesas abiertas con el sistema anterior (sin sesión secreta): se liberan para que se puedan usar
+  const openTables = await db.collection("tables").where("status", "==", "abierta").get();
+  for (const t of openTables.docs) {
+    const secret = await db.doc("tableSecrets/" + t.id).get();
+    if (!secret.exists) {
+      await t.ref.set({ status: "cerrada", closedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+      console.log(`Mesa ${t.id}: estaba abierta con el sistema anterior, la liberé.`);
+    }
+  }
+  const keys = await db.collection("tableKeys").count().get();
+  console.log(`Claves de QR de mesas creadas: ${keys.data().count}`);
+
   if (products.size === 0) {
     const menu = JSON.parse(fs.readFileSync(path.join(__dirname, "menu-tacos-josue.json"), "utf8"));
     const batch = db.batch();

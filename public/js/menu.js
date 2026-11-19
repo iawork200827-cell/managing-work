@@ -16,6 +16,11 @@ const MODE = ["mesa", "casa"].includes(document.body.dataset.mode) ? document.bo
 const ORDER_KEY = MODE === "casa" ? "comanda.myOrder.casa" : "comanda.myOrder";
 const params = new URLSearchParams(location.search);
 const tableParam = (params.get("m") || params.get("mesa") || "").replace(/[^0-9A-Za-z]/g, "").slice(0, 10);
+// Clave secreta que viene en el QR impreso de la mesa
+const keyParam = (params.get("k") || "").replace(/[^0-9A-Za-z]/g, "").slice(0, 40);
+if (tableParam && keyParam) local.set("comanda.key." + tableParam, keyParam);
+const JOIN_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+const newCode = () => { const a = new Uint32Array(6); crypto.getRandomValues(a); return Array.from(a, (n) => JOIN_CHARS[n % JOIN_CHARS.length]).join(""); };
 
 const state = {
   config: { ...DEFAULT_CONFIG },
@@ -40,8 +45,11 @@ const state = {
   checkout: false,
   // Mesa
   table: tableParam,
-  tableDoc: null,
+  tableKey: tableParam ? (keyParam || local.get("comanda.key." + tableParam) || "") : "",
+  tableDoc: null,   // estado público de la mesa (abierta / cerrada)
+  tab: null,        // la cuenta de este celular (si tiene)
   rounds: [],
+  joinCode: "",
   mySession: tableParam ? local.get("comanda.session." + tableParam) : null
 };
 
@@ -173,60 +181,51 @@ function takeoutTicket(o) {
   </div>`;
 }
 
+// ¿Este celular es parte de la cuenta abierta de la mesa?
+const inTab = () => !!(state.mySession && state.tab && !state.tab.closed);
+// Mesa ocupada por otra cuenta a la que este celular no se ha unido
+const tableTaken = () => !inTab() && state.tableDoc && state.tableDoc.status === "abierta";
+
 function tableHeader() {
-  const t = state.tableDoc;
-  const open = t && t.status === "abierta";
+  const t = state.tab;
+  if (state.mySession && t && t.closed) {
+    return `<div class="ticket ready"><div class="full"><h2>Cuenta cerrada. ¡Gracias por tu visita!</h2>
+      <p class="muted" style="margin:4px 0 0">Si quieren pedir algo más, escaneen otra vez el QR de la mesa.</p></div></div>`;
+  }
+  if (tableTaken()) {
+    return `<form class="ticket" id="joinForm"><div class="full"><h2>Esta mesa ya tiene una cuenta abierta</h2>
+      <p class="muted" style="margin:4px 0 8px">Para pedir a la misma cuenta, escribe el <strong>código de mesa</strong> que aparece en el celular de alguien de tu mesa.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <input id="joinCode" maxlength="6" autocomplete="off" autocapitalize="characters" placeholder="Ej. K7P2QX" style="flex:1 1 140px;width:auto;text-transform:uppercase;font-family:var(--mono)" value="${esc(state.joinCode)}">
+        <button class="primary" type="submit">Unirme</button></div></div></form>`;
+  }
+  if (!inTab() && !state.tableKey) {
+    return `<div class="notice">Para pedir, <strong>escanea el código QR que está en tu mesa</strong>.</div>`;
+  }
+  if (!inTab()) return "";
   const rounds = state.rounds.filter((r) => r.status !== "cancelado").sort((a, b) => a.createdAt - b.createdAt);
   const total = rounds.reduce((s, r) => s + (Number(r.total) || 0), 0);
-  // Cuenta que este celular tenía y que el dueño ya cerró
-  if (!open && state.mySession && t && t.session === state.mySession && t.status === "cerrada") {
-    return `<div class="ticket ready"><div class="full"><h2>Cuenta cerrada. ¡Gracias por tu visita!</h2>
-      <p class="muted" style="margin:4px 0 0">Si quieren pedir algo más, se abre una cuenta nueva al enviar el pedido.</p></div></div>`;
-  }
-  if (!open || !rounds.length) return "";
   let html = `<div class="ticket"><div><div class="label">Mesa ${esc(state.table)}</div><div class="big">${money(total, cur())}</div>
-    <div class="muted">${rounds.length} ${rounds.length === 1 ? "ronda" : "rondas"}</div></div>`;
+    <div class="muted">${rounds.length} ${rounds.length === 1 ? "ronda" : "rondas"}</div></div>
+    <div><div class="label">Código de mesa</div><div class="big">${esc(t.code)}</div>
+    <div class="muted">Compártelo con tu mesa para que pidan desde sus celulares.</div></div>`;
   const active = rounds.filter((r) => r.status === "pendiente" || r.status === "preparando");
   if (active.length) {
-    const last = active[active.length - 1];
-    const q = etaFor(last);
+    const q = etaFor(active[active.length - 1]);
     html += `<div><div class="label">Tu última ronda llega en</div><div class="big">~${q.minutes} min</div></div>`;
   } else if (rounds.some((r) => r.status === "listo")) {
     html += `<div><div class="label">Estado</div><h2>¡Ya va para tu mesa!</h2></div>`;
   }
-  html += `<div class="full"><details><summary class="muted">Ver la cuenta</summary>`;
-  rounds.forEach((r, i) => {
-    html += `<div class="round"><div class="row"><strong>Ronda ${i + 1}</strong><span class="tag">${STATUS_LABEL[r.status] || r.status}</span><span class="price">${money(r.total, cur())}</span></div>${itemsByPlate(r.items)}</div>`;
-  });
-  html += `</details></div><div class="full" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">`;
-  html += t.billRequested ? `<span class="tag">Ya pediste la cuenta. En un momento te atienden.</span>` : `<button data-bill>Pedir la cuenta</button>`;
-  html += `</div></div>`;
-  return html;
-}
-
-function checkoutHtml() {
-  const items = cartItems();
-  const canDeliver = deliveryOn();
-  const delivery = canDeliver ? state.delivery : "recoger";
-  return `<section class="checkout">
-    <button data-back>← Volver al menú</button>
-    <h2 style="margin-top:12px">Tu pedido</h2>
-    ${itemsByPlate(items)}
-    <div class="price">Total: ${money(cartTotal(), cur())}${delivery === "domicilio" ? ' <span class="muted">· envío gratis</span>' : ""}</div>
-    <form id="casaForm" class="form" style="margin-top:14px">
-      <label>Tu nombre<input id="custName" required maxlength="60" autocomplete="name" value="${esc(state.customer)}"></label>
-      <label>Teléfono<input id="custPhone" required type="tel" inputmode="tel" maxlength="20" autocomplete="tel" value="${esc(state.phone)}"></label>
-      <div class="opts" role="radiogroup" aria-label="Entrega" style="grid-column:1/-1">
-        ${canDeliver ? `<button type="button" role="radio" aria-checked="${delivery === "domicilio"}" class="${delivery === "domicilio" ? "on" : ""}" data-delivery="domicilio">A domicilio (gratis)</button>` : ""}
-        <button type="button" role="radio" aria-checked="${delivery === "recoger"}" class="${delivery === "recoger" ? "on" : ""}" data-delivery="recoger">Paso a recoger</button>
-      </div>
-      ${canDeliver ? "" : `<p class="muted" style="grid-column:1/-1;margin:0">Hoy no tenemos servicio a domicilio. Puedes pedir y pasar a recoger.</p>`}
-      ${delivery === "domicilio" ? `<label style="grid-column:1/-1">Dirección completa (calle, número, colonia, referencias)<input id="custAddr" required maxlength="200" autocomplete="street-address" value="${esc(state.address)}"></label>` : ""}
-      <label style="grid-column:1/-1">Nota (opcional)<input id="custNote" maxlength="200" value="${esc(state.note)}" placeholder="Sin cebolla, salsa aparte…"></label>
-      <p class="muted" style="grid-column:1/-1;margin:0">Pagas por transferencia antes de que preparemos tu pedido. Al enviarlo te mostramos los datos.</p>
-      <div style="grid-column:1/-1"><button class="primary" type="submit" id="placeOrder" ${state.sending ? "disabled" : ""}>Enviar pedido</button></div>
-    </form>
-  </section>`;
+  if (rounds.length) {
+    html += `<div class="full"><details><summary class="muted">Ver la cuenta</summary>`;
+    rounds.forEach((r, i) => {
+      html += `<div class="round"><div class="row"><strong>Ronda ${i + 1}</strong><span class="tag">${STATUS_LABEL[r.status] || r.status}</span><span class="price">${money(r.total, cur())}</span></div>${itemsByPlate(r.items)}</div>`;
+    });
+    html += `</details></div><div class="full" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">`;
+    html += t.billRequested ? `<span class="tag">Ya pediste la cuenta. En un momento te atienden.</span>` : `<button data-bill>Pedir la cuenta</button>`;
+    html += `</div>`;
+  }
+  return html + `</div>`;
 }
 
 function tablePicker() {
@@ -331,19 +330,46 @@ function renderCart() {
 
 // ---------- mesa: abrir o unirse a la cuenta ----------
 async function ensureTableSession() {
-  const ref = doc(db, "tables", state.table);
-  const t = state.tableDoc;
-  if (t && t.status === "abierta") return t.session;
-  const session = newId(20);
+  if (inTab()) return state.mySession;
+  if (tableTaken()) { const e = new Error("taken"); e.code = "taken"; throw e; }
+  if (!state.tableKey) { const e = new Error("nokey"); e.code = "nokey"; throw e; }
+  const session = newId(24);
+  const code = newCode();
+  const b = writeBatch(db);
+  b.set(doc(db, "tableSecrets", state.table), { session, key: state.tableKey, openedAt: serverTimestamp() });
+  b.set(doc(db, "tables", state.table), { status: "abierta", openedAt: serverTimestamp() });
+  b.set(doc(db, "tabs", session), { table: state.table, openedAt: serverTimestamp(), code, closed: false, billRequested: false });
+  b.set(doc(db, "joins", state.table + "-" + code), { session, table: state.table, createdAt: serverTimestamp() });
   try {
-    await setDoc(ref, { status: "abierta", session, openedAt: serverTimestamp() });
-    return session;
+    await b.commit();
   } catch (e) {
-    // Otra persona de la mesa la abrió al mismo tiempo: usamos esa cuenta.
-    const s = await getDoc(ref);
-    if (s.exists() && s.data().status === "abierta") return s.data().session;
-    throw e;
+    // Otra persona abrió la mesa al mismo tiempo, o el QR es viejo
+    const t = await getDoc(doc(db, "tables", state.table)).catch(() => null);
+    if (t && t.exists() && t.data().status === "abierta") { const err = new Error("taken"); err.code = "taken"; throw err; }
+    const err = new Error("badkey"); err.code = "badkey"; throw err;
   }
+  setSession(session);
+  return session;
+}
+
+function setSession(session) {
+  state.mySession = session;
+  local.set("comanda.session." + state.table, session);
+  watchTab(session);
+}
+
+async function joinTable(code) {
+  const c = code.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (c.length !== 6) { toast("El código tiene 6 letras o números"); return; }
+  try {
+    const j = await getDoc(doc(db, "joins", state.table + "-" + c));
+    if (!j.exists()) { toast("Ese código no es de esta mesa. Revísalo."); return; }
+    const t = await getDoc(doc(db, "tabs", j.data().session));
+    if (!t.exists() || t.data().closed) { toast("Esa cuenta ya se cerró."); return; }
+    state.joinCode = "";
+    setSession(j.data().session);
+    toast("¡Listo! Ya estás en la cuenta de la mesa");
+  } catch (e) { console.error(e); toast("No se pudo revisar el código. Intenta otra vez."); }
 }
 
 // ---------- enviar ----------
@@ -381,10 +407,15 @@ async function placeOrder() {
     if (MODE === "mesa") {
       order.table = state.table;
       order.session = await ensureTableSession();
-      state.mySession = order.session; local.set("comanda.session." + state.table, order.session);
     }
     const batch = writeBatch(db);
     batch.set(ref, order);
+    if (MODE === "mesa") {
+      // Copia de la ronda para que la mesa vea su cuenta
+      const round = { items, total: order.total, status: "pendiente", createdAt: serverTimestamp(), minutes };
+      if (order.plates) round.plates = order.plates;
+      batch.set(doc(db, "tabs", order.session, "rounds", ref.id), round);
+    }
     // Los pedidos desde casa entran a la fila hasta que se confirma el pago
     if (MODE !== "casa") batch.set(doc(db, "queue", ref.id), { status: "pendiente", createdAt: serverTimestamp(), minutes });
     await batch.commit();
@@ -400,7 +431,11 @@ async function placeOrder() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   } catch (e) {
     console.error(e);
-    toast(closed() ? "Hoy ya no estamos recibiendo pedidos" : "No se pudo enviar. Revisa tu internet e intenta otra vez.");
+    const msg = e && e.code === "taken" ? "Esta mesa ya tiene una cuenta abierta. Escribe el código de tu mesa para unirte."
+      : e && e.code === "nokey" ? "Escanea el código QR que está en tu mesa para pedir."
+      : e && e.code === "badkey" ? "Este QR ya no es válido. Pide al mesero el QR actual de la mesa."
+      : closed() ? "Hoy ya no estamos recibiendo pedidos" : "No se pudo enviar. Revisa tu internet e intenta otra vez.";
+    toast(msg);
   } finally {
     state.sending = false; render();
   }
@@ -419,13 +454,18 @@ function watchMyOrder(id) {
   }, () => { state.myOrder = null; render(); });
 }
 
-let unsubRounds = null, roundsSession = null;
-function watchRounds(session) {
-  if (session === roundsSession) return;
+let unsubTab = null, unsubRounds = null, tabSession = null;
+function watchTab(session) {
+  if (session === tabSession) return;
+  if (unsubTab) unsubTab();
   if (unsubRounds) unsubRounds();
-  roundsSession = session; state.rounds = [];
-  if (!session) { unsubRounds = null; render(); return; }
-  unsubRounds = onSnapshot(query(collection(db, "orders"), where("type", "==", "mesa"), where("session", "==", session)), (s) => {
+  tabSession = session; state.tab = null; state.rounds = [];
+  if (!session) { unsubTab = unsubRounds = null; render(); return; }
+  unsubTab = onSnapshot(doc(db, "tabs", session), (s) => {
+    state.tab = s.exists() ? s.data() : null;
+    render();
+  }, (e) => console.error(e));
+  unsubRounds = onSnapshot(collection(db, "tabs", session, "rounds"), (s) => {
     state.rounds = s.docs.map((d) => { const x = d.data({ serverTimestamps: "estimate" }); return { id: d.id, ...x, createdAt: toMillis(x.createdAt) }; });
     render();
   }, (e) => console.error(e));
@@ -459,7 +499,7 @@ document.addEventListener("click", (ev) => {
   }
   if ("neworder" in d) { watchMyOrder(null); return; }
   if ("bill" in d) {
-    updateDoc(doc(db, "tables", state.table), { billRequested: true })
+    updateDoc(doc(db, "tabs", state.mySession), { billRequested: true })
       .then(() => toast("Listo, en un momento te traen la cuenta"), () => toast("No se pudo pedir la cuenta. Avísale al mesero."));
   }
 });
@@ -470,9 +510,11 @@ document.addEventListener("input", (ev) => {
   if (id === "custPhone") state.phone = ev.target.value;
   if (id === "custAddr") state.address = ev.target.value;
   if (id === "payRef") state.payRef = ev.target.value;
+  if (id === "joinCode") state.joinCode = ev.target.value;
 });
 document.addEventListener("submit", (ev) => {
   if (ev.target.id === "casaForm") { ev.preventDefault(); placeOrder(); return; }
+  if (ev.target.id === "joinForm") { ev.preventDefault(); joinTable(state.joinCode); return; }
   if (ev.target.id === "payForm") {
     ev.preventDefault();
     const ref = state.payRef.trim().slice(0, 60);
@@ -520,10 +562,9 @@ function start() {
   if (MODE === "mesa") {
     onSnapshot(doc(db, "tables", state.table), safe((s) => {
       state.tableDoc = s.exists() ? s.data() : null;
-      const open = state.tableDoc && state.tableDoc.status === "abierta";
-      watchRounds(open ? state.tableDoc.session : null);
       render();
     }), onErr);
+    if (state.mySession) watchTab(state.mySession);
   }
 }
 start();
