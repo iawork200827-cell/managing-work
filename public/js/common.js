@@ -15,7 +15,7 @@ export const STATUS_LABEL = {
 };
 
 export const DEFAULT_CONFIG = {
-  name: "Tacos Josué", currency: "$", tables: 10,
+  name: "Tacos Josué", currency: "$", tables: 4,
   minMinutes: 5, maxMinutes: 10, capacity: 1, closedUntil: null
 };
 
