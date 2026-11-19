@@ -14,7 +14,7 @@ export const STATUS_LABEL = {
   entregado: "Entregado", cancelado: "Cancelado"
 };
 
-export const DEFAULT_CONFIG = { name: "Mi negocio", minutesPerOrder: 5, currency: "$", useTables: false, tables: 10 };
+export const DEFAULT_CONFIG = { name: "Tacos Josué", minutesPerOrder: 5, currency: "$", useTables: false, tables: 10 };
 
 export const $ = (id) => document.getElementById(id);
 

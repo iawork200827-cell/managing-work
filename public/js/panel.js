@@ -317,7 +317,7 @@ document.addEventListener("submit", (ev) => {
   }
   if (id === "sform") {
     const body = {
-      name: $("sName").value.trim() || "Mi negocio",
+      name: $("sName").value.trim() || "Tacos Josué",
       minutesPerOrder: Math.min(120, Math.max(1, Number($("sMin").value) || 5)),
       currency: $("sCur").value.trim() || "$",
       useTables: $("sTables").checked,
