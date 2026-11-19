@@ -1,0 +1,46 @@
+name: Publicar app en Firebase
+
+# Publica el menú, el panel y las reglas de seguridad cada vez que cambia el código de la app.
+on:
+  push:
+    branches:
+      - main
+      - claude/amazing-noether-dj9gk7
+    paths:
+      - "public/**"
+      - "firestore.rules"
+      - "firestore.indexes.json"
+      - "firebase.json"
+      - ".firebaserc"
+      - ".github/workflows/deploy-firebase.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: firebase-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      - uses: actions/setup-node@v4.1.0
+        with:
+          node-version: 20
+
+      - name: Publicar en Firebase
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          if [ -z "$FIREBASE_SERVICE_ACCOUNT" ]; then
+            echo "::warning::Falta el secreto FIREBASE_SERVICE_ACCOUNT en GitHub (Settings > Secrets and variables > Actions). No se publicó nada."
+            exit 0
+          fi
+          printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/sa.json"
+          export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/sa.json"
+          npx --yes firebase-tools@13.29.1 deploy --only hosting,firestore:rules --non-interactive --force
+          rm -f "$RUNNER_TEMP/sa.json"
