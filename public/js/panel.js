@@ -124,7 +124,7 @@ function render() {
   const tabs = [
     ["pedidos", `Pedidos${pend ? ` (${pend})` : ""}`],
     ["mesas", `Mesas${openTables ? ` (${openTables})` : ""}${bills ? " · cuenta" : ""}`],
-    ["productos", "Productos"], ["ajustes", "Ajustes"], ["qr", "Códigos QR"]
+    ["ventas", "Ventas"], ["productos", "Productos"], ["ajustes", "Ajustes"], ["qr", "Códigos QR"]
   ];
   const closed = isClosed(state.config);
   let html = `<div class="closed-bar no-print ${closed ? "off" : ""}">
@@ -140,6 +140,7 @@ function render() {
   if (state.tab === "productos") html += productsHtml();
   if (state.tab === "ajustes") html += settingsHtml();
   if (state.tab === "qr") html += qrHtml();
+  if (state.tab === "ventas") html += salesHtml();
   app.innerHTML = html;
   if (state.tab === "qr") drawQrs();
 
@@ -421,6 +422,111 @@ function drawQrs() {
   });
 }
 
+// ---------- ventas del día (con anular / restaurar) ----------
+const dayKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+let salesUnsub = null, salesLoadedFor = null;
+function loadSalesDay(key) {
+  if (salesLoadedFor === key) return;
+  salesLoadedFor = key;
+  if (salesUnsub) { salesUnsub(); salesUnsub = null; }
+  state.salesOrders = null;
+  if (key === dayKey(new Date())) return; // hoy: se usan los pedidos que ya están en vivo
+  const [y, m, d] = key.split("-").map(Number);
+  const from = new Date(y, m - 1, d, 0, 0, 0, 0), to = new Date(y, m - 1, d + 1, 0, 0, 0, 0);
+  salesUnsub = onSnapshot(query(collection(db, "orders"), where("createdAt", ">=", Timestamp.fromDate(from)), where("createdAt", "<", Timestamp.fromDate(to)), orderBy("createdAt", "asc")), (snap) => {
+    state.salesOrders = snap.docs.map(toOrder);
+    render();
+  }, (e) => { console.error(e); toast("No se pudieron leer las ventas de ese día"); });
+}
+
+const METHOD_LABEL = { efectivo: "Efectivo", tarjeta: "Tarjeta", transferencia: "Transferencia" };
+function methodOf(o) {
+  if (o.payMethod) return o.payMethod;
+  if (o.type === "llevar" && o.status === "entregado") return "efectivo"; // se paga al recoger
+  return "";
+}
+
+// Junta los pedidos del día en ventas: cada cuenta de mesa es una sola venta
+function salesOf(orders) {
+  const groups = new Map();
+  for (const o of orders) {
+    if (o.status === "por_pagar") continue; // no es venta hasta confirmar el pago
+    const key = o.type === "mesa" ? "tab:" + o.session : "order:" + o.id;
+    const g = groups.get(key) || { key, type: o.type, orders: [], table: o.table, session: o.session, who: o.customer || "" };
+    g.orders.push(o);
+    groups.set(key, g);
+  }
+  return [...groups.values()].map((g) => {
+    const live = g.orders.filter((o) => o.status !== "cancelado");
+    const voided = live.length === 0;
+    const total = (voided ? g.orders : live).reduce((s, o) => s + (Number(o.total) || 0), 0);
+    const first = g.orders.reduce((a, b) => (a.createdAt < b.createdAt ? a : b));
+    const paid = live.length > 0 && live.every((o) => o.paid || (o.type === "llevar" && o.status === "entregado"));
+    const tabInfo = g.type === "mesa" ? state.tabsOpen[g.session] : null;
+    return { ...g, voided, total, time: first.createdAt, method: methodOf(live[0] || g.orders[0]), paid, open: g.type === "mesa" && !!tabInfo, code: tabInfo ? tabInfo.code : first.code };
+  }).sort((a, b) => b.time - a.time);
+}
+
+function salesHtml() {
+  const key = state.salesDay || dayKey(new Date());
+  loadSalesDay(key);
+  const isToday = key === dayKey(new Date());
+  const orders = isToday ? [...state.today.values()] : state.salesOrders;
+  let html = `<div class="form no-print" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr))">
+    <label>Día<input id="salesDay" type="date" value="${esc(key)}" max="${esc(dayKey(new Date()))}"></label>
+    <p class="muted" style="margin:0">Toca <strong>Anular</strong> en una venta para que ya no sume (por ejemplo, si se cobró por error). Puedes deshacerlo con <strong>Restaurar</strong>.</p></div>`;
+  if (!orders) return html + '<p class="muted">Cargando ventas…</p>';
+  const sales = salesOf(orders);
+  const valid = sales.filter((v) => !v.voided);
+  const sum = (arr) => arr.reduce((s, v) => s + v.total, 0);
+  const byMethod = {};
+  valid.filter((v) => v.paid).forEach((v) => { const m = v.method || "otro"; byMethod[m] = (byMethod[m] || 0) + v.total; });
+  const pending = valid.filter((v) => !v.paid);
+  html += `<div class="stats">
+    <div class="stat"><span class="label">Total vendido</span><b>${money(sum(valid), cur())}</b></div>
+    <div class="stat"><span class="label">Ventas</span><b>${valid.length}</b></div>
+    ${["efectivo", "tarjeta", "transferencia"].map((m) => `<div class="stat"><span class="label">${METHOD_LABEL[m]}</span><b>${money(byMethod[m] || 0, cur())}</b></div>`).join("")}
+    <div class="stat"><span class="label">Por cobrar</span><b>${money(sum(pending), cur())}</b></div>
+    <div class="stat"><span class="label">Anuladas</span><b>${sales.length - valid.length}</b></div>
+  </div>`;
+  if (!sales.length) return html + '<div class="empty">No hay ventas este día.</div>';
+  html += '<div class="plist">';
+  for (const v of sales) {
+    const who = v.type === "mesa" ? `Mesa ${esc(v.table)} · cuenta <span class="mono">${esc(v.code || "")}</span>` : `${v.type === "casa" ? "Desde casa" : "Para llevar"} · ${esc(v.who)} <span class="mono muted">#${esc(v.code || "")}</span>`;
+    const state_ = v.voided ? '<span class="tag bill">Anulada</span>' : v.open ? '<span class="tag">Cuenta abierta</span>' : v.paid ? `<span class="tag casa">${METHOD_LABEL[v.method] || "Cobrada"}</span>` : '<span class="tag">Por cobrar</span>';
+    html += `<div class="prow ${v.voided ? "voided" : ""}"><div><div>${who} ${state_}</div>
+        <div class="muted" style="font-size:.82rem">${fmtTime(v.time)} · ${v.orders.length > 1 ? v.orders.length + " rondas" : "1 pedido"}</div>
+        <details><summary class="muted" style="font-size:.82rem">Ver productos</summary>${summaryHtml(v.orders.filter((o) => v.voided || o.status !== "cancelado").map((o) => o.items), cur(), "Productos")}</details></div>
+      <div class="acts"><span class="price">${money(v.total, cur())}</span>
+        ${v.voided ? `<button data-restore="${esc(v.key)}">Restaurar</button>` : `<button class="danger" data-void="${esc(v.key)}">Anular</button>`}</div></div>`;
+  }
+  return html + "</div>";
+}
+
+function voidSale(key, restore) {
+  const orders = state.salesDay && state.salesDay !== dayKey(new Date()) ? state.salesOrders || [] : [...state.today.values()];
+  const v = salesOf(orders).find((x) => x.key === key);
+  if (!v) return;
+  return write(async () => {
+    const b = writeBatch(db);
+    for (const o of v.orders) {
+      if (!restore) {
+        if (o.status === "cancelado") continue;
+        b.update(doc(db, "orders", o.id), { status: "cancelado", voided: true, prevStatus: o.status, voidedAt: serverTimestamp() });
+        b.delete(doc(db, "queue", o.id));
+        if (o.type === "mesa" && o.session) b.set(doc(db, "tabs", o.session, "rounds", o.id), { status: "cancelado" }, { merge: true });
+      } else {
+        if (!o.voided) continue;
+        // Se restaura como entregada/cobrada para que vuelva a sumar (no regresa a la cocina)
+        const back = o.prevStatus === "por_pagar" ? "por_pagar" : "entregado";
+        b.update(doc(db, "orders", o.id), { status: back, voided: false });
+        if (o.type === "mesa" && o.session) b.set(doc(db, "tabs", o.session, "rounds", o.id), { status: back }, { merge: true });
+      }
+    }
+    await b.commit();
+  }, restore ? "Venta restaurada" : "Venta anulada: ya no suma");
+}
+
 // ---------- escrituras ----------
 async function write(fn, okMsg) {
   try { await fn(); if (okMsg) toast(okMsg); }
@@ -493,6 +599,11 @@ document.addEventListener("click", (ev) => {
     return;
   }
   if (d.advance) { setStatus(d.advance, d.to); return; }
+  if (d.void) {
+    if (!t.dataset.confirm) { t.dataset.confirm = "1"; t.textContent = "¿Anular? Toca otra vez"; return; }
+    voidSale(d.void, false); return;
+  }
+  if (d.restore) { voidSale(d.restore, true); return; }
   if (d.confirmpay) {
     const o = allOrders().find((x) => x.id === d.confirmpay);
     if (!o) return;
@@ -568,6 +679,10 @@ document.addEventListener("click", (ev) => {
     if (!email) { toast("Escribe tu correo primero"); $("loginEmail").focus(); return; }
     sendPasswordResetEmail(auth, email).then(() => toast("Te enviamos un correo para cambiar tu contraseña"), () => toast("No se pudo enviar el correo"));
   }
+});
+
+document.addEventListener("change", (ev) => {
+  if (ev.target.id === "salesDay" && ev.target.value) { state.salesDay = ev.target.value; state.resetForms = true; render(); }
 });
 
 document.addEventListener("submit", (ev) => {
