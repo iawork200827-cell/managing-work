@@ -9,7 +9,7 @@ service cloud.firestore {
     // CAMBIA ESTE CORREO por el correo de tu usuario de dueño (puedes poner varios separados por coma).
     function isOwner() {
       return request.auth != null
-        && request.auth.token.email in ['TU_CORREO@ejemplo.com'];
+        && request.auth.token.email in ['iawork200827@gmail.com'];
     }
 
     function validOrder() {

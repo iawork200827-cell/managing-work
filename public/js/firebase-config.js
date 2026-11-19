@@ -12,4 +12,4 @@ export const firebaseConfig = {
 
 // 2) El correo (o correos) de las personas que pueden entrar al panel del dueño.
 //    Debe ser el mismo que pusiste en firestore.rules.
-export const OWNER_EMAILS = ["TU_CORREO@ejemplo.com"];
+export const OWNER_EMAILS = ["iawork200827@gmail.com"];
