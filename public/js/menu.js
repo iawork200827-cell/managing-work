@@ -66,10 +66,20 @@ function optionsOf(p) {
   return (Array.isArray(p.options) ? p.options : []).filter((o) => o && !out.has(String(o).toLowerCase()));
 }
 function hasOptions(p) { return Array.isArray(p.options) && p.options.length > 0; }
+// Quita acentos y mayúsculas para comparar ("Hígado" = "higado")
+const norm = (x) => String(x || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+// Un producto está agotado si el dueño lo bloqueó, o si su nombre lleva una carne agotada
+// (por ejemplo "Taco de arrachera" cuando la Arrachera está agotada)
+function isOut(p) {
+  if (p.available === false) return true;
+  const name = norm(p.name);
+  return [...outOptions()].some((o) => o && name.includes(norm(o)));
+}
+
 function validKey(key) {
   const [id, opt] = splitKey(key);
   const p = state.products.find((x) => x.id === id);
-  if (!p || p.available === false) return null;
+  if (!p || isOut(p)) return null;
   if (hasOptions(p) && !optionsOf(p).includes(opt)) return null;
   return { p, opt };
 }
@@ -314,7 +324,7 @@ function render() {
   for (const [cat, items] of Object.entries(groups)) {
     html += `<section class="section"><h2>${esc(cat)}</h2>`;
     for (const p of items) {
-      const out = p.available === false;
+      const out = isOut(p);
       const withOpts = hasOptions(p);
       const opts = optionsOf(p);
       const noneLeft = withOpts && !opts.length;

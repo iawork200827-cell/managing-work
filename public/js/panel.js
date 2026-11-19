@@ -300,9 +300,10 @@ function productsHtml() {
       <button class="primary" data-sample>Cargar menú de Tacos Josué</button></div>`;
   }
   const out = state.products.filter((p) => p.available === false).length;
-  const allOpts = [...new Set([...MEATS, ...state.products.flatMap((p) => p.options || [])])];
+  // Carnes para escoger + carnes que van en el nombre del producto (ej. "Taco de arrachera")
+  const allOpts = [...new Set([...MEATS, ...EXTRA_MEATS, ...state.products.flatMap((p) => p.options || [])])];
   const outOpts = new Set((state.config.outOptions || []).map((o) => String(o).toLowerCase()));
-  html += `<div class="meatbox"><h3>Carnes</h3><p class="muted" style="margin:2px 0 8px">Toca una carne para marcarla como agotada en todo el menú.</p>
+  html += `<div class="meatbox"><h3>Carnes</h3><p class="muted" style="margin:2px 0 8px">Toca una carne para marcarla como agotada en todo el menú. Con <strong>Arrachera</strong> se bloquean de un jalón todos los productos de arrachera.</p>
     <div class="opts">${allOpts.map((o) => { const off = outOpts.has(o.toLowerCase()); return `<button class="toggle ${off ? "off" : "on"}" data-meat="${esc(o)}" aria-pressed="${off}">${esc(o)}${off ? " · agotada" : ""}</button>`; }).join("")}</div>
     ${state.products.some((p) => WITH_MEATS.includes(p.name) && !(p.options || []).length) ? `<button style="margin-top:10px" data-addmeats>Agregar carnes a tacos, burritos, quesadillas, gringas y tortas</button>` : ""}</div>`;
   html += `<div class="no-print" style="margin:0 0 10px"><button data-sample data-replace>Reemplazar todo con el menú de Tacos Josué</button></div>`;
@@ -310,8 +311,9 @@ function productsHtml() {
   const sorted = [...state.products].sort((a, b) => (a.category || "").localeCompare(b.category || "") || (a.order ?? 0) - (b.order ?? 0));
   for (const p of sorted) {
     const on = p.available !== false;
+    const byMeat = on && [...outOpts].some((o) => p.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").includes(o.normalize("NFD").replace(/[\u0300-\u036f]/g, "")));
     html += `<div class="prow"><div><strong>${esc(p.name)}</strong> <span class="price muted">${money(p.price, cur())}</span>
-        <div class="muted" style="font-size:.82rem">${esc(p.category || "Otros")}${(p.options || []).length ? " · " + esc(p.options.join(", ")) : ""}</div></div>
+        <div class="muted" style="font-size:.82rem">${esc(p.category || "Otros")}${(p.options || []).length ? " · " + esc(p.options.join(", ")) : ""}${byMeat ? ' · <span class="late">agotado por la carne</span>' : ""}</div></div>
       <div class="acts">
         <button class="toggle ${on ? "on" : "off"}" data-toggle="${esc(p.id)}" aria-pressed="${!on}">${on ? "Disponible" : "Agotado"}</button>
         <button data-edit="${esc(p.id)}">Editar</button>
@@ -464,6 +466,8 @@ function closeTab(tabId, method) {
 // Carnes que el cliente puede escoger en tacos, burritos, quesadillas, gringas y tortas.
 const MEATS = ["Bistec", "Pastor", "Combinado", "Barbacoa", "Alambre", "Chorizo", "Tripa", "Hígado"];
 const WITH_MEATS = ["Tacos", "Burritos", "Quesadilla", "Gringa", "Tortas"];
+// Al marcar una de estas como agotada, se bloquean todos los productos que la llevan en el nombre
+const EXTRA_MEATS = ["Arrachera"];
 
 // Menú de Tacos Josué (tomado de su punto de venta). Se carga con un botón en Productos.
 const SAMPLE = [
