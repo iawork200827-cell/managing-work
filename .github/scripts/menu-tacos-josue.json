@@ -1,0 +1,13 @@
+{
+  "meats": ["Bistec", "Pastor", "Combinado", "Barbacoa", "Alambre", "Chorizo", "Tripa", "Hígado"],
+  "withMeats": ["Tacos", "Burritos", "Quesadilla", "Gringa", "Tortas"],
+  "products": [
+    ["Tacos", 17, "Tacos"], ["Taco de arrachera", 18, "Tacos"],
+    ["Burritos", 20, "Burritos"], ["Burrito de arrachera", 25, "Burritos"],
+    ["Quesadilla", 40, "Gringas y quesadillas"], ["Quesadilla de arrachera", 45, "Gringas y quesadillas"],
+    ["Gringa", 50, "Gringas y quesadillas"], ["Gringa de arrachera", 55, "Gringas y quesadillas"],
+    ["Tortas", 45, "Tortas"], ["Torta de arrachera", 50, "Tortas"],
+    ["1 kg de arrachera", 320, "Por kilo"], ["1 kg de barbacoa", 300, "Por kilo"], ["1 kg de sazón", 260, "Por kilo"],
+    ["Refresco y agua", 25, "Bebidas"], ["Agua de litro", 40, "Bebidas"], ["Refresco 1½ litros", 55, "Bebidas"]
+  ]
+}

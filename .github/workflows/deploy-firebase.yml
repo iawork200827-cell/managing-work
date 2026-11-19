@@ -13,7 +13,7 @@ on:
       - "firebase.json"
       - ".firebaserc"
       - ".github/workflows/deploy-firebase.yml"
-      - ".github/scripts/revisar-sitio.cjs"
+      - ".github/scripts/**"
   workflow_dispatch:
 
 permissions:
@@ -56,6 +56,10 @@ jobs:
           unset ALL_SECRETS
           export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/sa.json"
           npx --yes firebase-tools@13.29.1 deploy --only hosting,firestore:rules --non-interactive --force
+          # Revisar la base de datos y cargar el menú si está vacío
+          npm install --no-save --no-audit --no-fund firebase-admin@12.7.0 >/dev/null 2>&1
+          OWNER_EMAIL=$(grep -o '"[^"]*@[^"]*"' public/js/firebase-config.js | head -n1 | tr -d '"') \
+            node .github/scripts/estado-y-menu.cjs || true
           rm -f "$RUNNER_TEMP/sa.json"
 
       - name: Revisar el sitio publicado
