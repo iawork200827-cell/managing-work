@@ -110,8 +110,8 @@ export function showErrorsOnPage() {
 export function summarize(itemLists) {
   const map = new Map();
   for (const items of itemLists) for (const i of items || []) {
-    const key = i.name + "|" + i.price;
-    const cur = map.get(key) || { name: i.name, price: Number(i.price) || 0, qty: 0 };
+    const key = i.name + "|" + i.price + "|" + (i.toGo ? 1 : 0);
+    const cur = map.get(key) || { name: i.name + (i.toGo ? " (para llevar)" : ""), price: Number(i.price) || 0, qty: 0 };
     cur.qty += Number(i.qty) || 0;
     map.set(key, cur);
   }
@@ -143,3 +143,17 @@ export function tableIds(config) {
 
 // Plataformas de reparto
 export const PLATFORMS = { uber: "Uber Eats", didi: "DiDi Food" };
+
+// Lista de productos agrupada por plato; los platos para llevar se marcan claramente
+export function platesHtml(items) {
+  const groups = {};
+  (items || []).forEach((i) => (groups[i.plate || 1] ||= []).push(i));
+  const keys = Object.keys(groups).sort((a, b) => a - b);
+  const list = (arr) => `<ul>${arr.map((i) => `<li>${Number(i.qty) || 0} × ${esc(i.name)}</li>`).join("")}</ul>`;
+  const toGo = (arr) => arr.some((i) => i.toGo);
+  if (keys.length <= 1) {
+    const arr = items || [];
+    return (toGo(arr) ? `<div class="plate-label togo">Para llevar</div>` : "") + list(arr);
+  }
+  return keys.map((k) => `<div class="plate-label ${toGo(groups[k]) ? "togo" : ""}">Plato ${k}${toGo(groups[k]) ? " · PARA LLEVAR" : ""}</div>${list(groups[k])}`).join("");
+}

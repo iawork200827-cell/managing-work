@@ -8,7 +8,7 @@ import {
 import { signInAnonymously, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   db, auth, configured, OWNER_EMAILS, $, esc, money, toMillis, local, toast, notConfiguredHtml,
-  STATUS_LABEL, DEFAULT_CONFIG, prepMinutes, newId, showErrorsOnPage, summaryHtml, isClosed, tableLabel, tableIds, BAR_ID, PLATFORMS
+  STATUS_LABEL, DEFAULT_CONFIG, prepMinutes, newId, showErrorsOnPage, summaryHtml, isClosed, tableLabel, tableIds, BAR_ID, platesHtml, PLATFORMS
 } from "./common.js";
 
 showErrorsOnPage();
@@ -29,7 +29,7 @@ const state = {
   view: "mesas", config: { ...DEFAULT_CONFIG }, products: [],
   tabs: {}, rounds: {}, active: [],
   // Pedido que se está capturando
-  target: null, plates: [{}], cur: 0, pick: {}, note: "", customer: "", phone: "", extRef: "", sending: false,
+  target: null, plates: [{}], toGo: [], cur: 0, pick: {}, note: "", customer: "", phone: "", extRef: "", sending: false,
   openFor: null, openName: "", unsubs: []
 };
 const cur = () => state.config.currency || "$";
@@ -49,12 +49,13 @@ function validKey(key) {
 }
 function cartItems() {
   const out = []; let num = 0;
-  state.plates.forEach((plate) => {
+  state.plates.forEach((plate, idx) => {
     if (Object.entries(plate).some(([k, q]) => q > 0 && validKey(k))) num++;
     for (const [key, qty] of Object.entries(plate)) {
       const v = validKey(key); if (!v || qty <= 0) continue;
       const item = { id: v.p.id, name: v.opt ? `${v.p.name} de ${v.opt.toLowerCase()}` : v.p.name, price: Number(v.p.price) || 0, qty, plate: num };
       if (v.opt) item.option = v.opt;
+      if (state.target && state.target.type === "mesa" && state.toGo[idx]) item.toGo = true;
       out.push(item);
     }
   });
@@ -142,14 +143,7 @@ function takeoutHtml() {
   return html + "</div>";
 }
 
-function itemsByPlate(items) {
-  const groups = {};
-  (items || []).forEach((i) => (groups[i.plate || 1] ||= []).push(i));
-  const keys = Object.keys(groups).sort((a, b) => a - b);
-  const list = (arr) => `<ul>${arr.map((i) => `<li>${Number(i.qty) || 0} × ${esc(i.name)}</li>`).join("")}</ul>`;
-  if (keys.length <= 1) return list(items || []);
-  return keys.map((k) => `<div class="plate-label">Plato ${k}</div>${list(groups[k])}`).join("");
-}
+function itemsByPlate(items) { return platesHtml(items); }
 
 function kitchenHtml() {
   const NEXT = {
@@ -196,7 +190,8 @@ function builderHtml() {
     <p class="muted" style="margin:0 0 8px">Captura los productos tal como vienen en la app. Ya están pagados por la plataforma.</p>`;
   if (t.type === "llevar") html += `<div class="form"><label>Nombre del cliente<input id="custName" maxlength="60" value="${esc(state.customer)}"></label>
     <label>Teléfono (opcional)<input id="custPhone" type="tel" maxlength="20" value="${esc(state.phone)}"></label></div>`;
-  html += `<div class="plates">${state.plates.map((p, i) => { const n = Object.values(p).reduce((a, b) => a + b, 0); return `<button data-plate="${i}" class="${i === state.cur ? "on" : ""}">Plato ${i + 1}${n ? ` · ${n}` : ""}</button>`; }).join("")}<button data-addplate>+ Otro plato</button></div>`;
+  html += `<div class="plates">${state.plates.map((p, i) => { const n = Object.values(p).reduce((a, b) => a + b, 0); return `<button data-plate="${i}" class="${i === state.cur ? "on" : ""}">Plato ${i + 1}${state.toGo[i] ? " (llevar)" : ""}${n ? ` · ${n}` : ""}</button>`; }).join("")}<button data-addplate>+ Otro plato</button></div>`;
+  if (t.type === "mesa") html += `<div style="margin-top:8px"><button data-togo class="toggle ${state.toGo[state.cur] ? "off" : "on"}">${state.toGo[state.cur] ? `Plato ${state.cur + 1}: PARA LLEVAR ✓` : `Plato ${state.cur + 1}: comer aquí`}</button></div>`;
   const groups = {};
   [...state.products].sort((a, b) => (a.order ?? 0) - (b.order ?? 0)).forEach((p) => (groups[p.category || "Otros"] ||= []).push(p));
   const plate = state.plates[state.cur];
@@ -248,7 +243,7 @@ async function openTab(table, name) {
 }
 
 function startOrder(target) {
-  state.target = target; state.plates = [{}]; state.cur = 0; state.note = ""; state.customer = ""; state.phone = ""; state.extRef = "";
+  state.target = target; state.plates = [{}]; state.toGo = []; state.cur = 0; state.note = ""; state.customer = ""; state.phone = ""; state.extRef = "";
   window.scrollTo({ top: 0 }); render();
 }
 
@@ -338,6 +333,7 @@ document.addEventListener("click", (ev) => {
   if (d.inc) { plate[d.inc] = (plate[d.inc] || 0) + 1; render(); return; }
   if (d.dec) { plate[d.dec] = (plate[d.dec] || 0) - 1; if (plate[d.dec] <= 0) delete plate[d.dec]; render(); return; }
   if (d.plate) { state.cur = Number(d.plate); render(); return; }
+  if ("togo" in d) { state.toGo[state.cur] = !state.toGo[state.cur]; render(); return; }
   if ("addplate" in d) { state.plates.push({}); state.cur = state.plates.length - 1; render(); return; }
   if (t.id === "sendOrder") { sendOrder(); return; }
   if (d.advance) { const o = state.active.find((x) => x.id === d.advance); if (o) setStatus(o, d.to); return; }

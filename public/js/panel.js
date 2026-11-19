@@ -9,7 +9,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   db, auth, configured, OWNER_EMAILS, $, esc, money, toMillis, toast, notConfiguredHtml,
-  STATUS_LABEL, DEFAULT_CONFIG, isClosed, endOfToday, prepMinutes, newId, summaryHtml, tableLabel, tableIds, BAR_ID, PLATFORMS
+  STATUS_LABEL, DEFAULT_CONFIG, isClosed, endOfToday, prepMinutes, newId, summaryHtml, tableLabel, tableIds, BAR_ID, platesHtml, PLATFORMS
 } from "./common.js";
 
 const state = {
@@ -178,14 +178,7 @@ function loginHtml() {
   </form>`;
 }
 
-function itemsByPlate(items) {
-  const groups = {};
-  (items || []).forEach((i) => (groups[i.plate || 1] ||= []).push(i));
-  const keys = Object.keys(groups).sort((a, b) => a - b);
-  const list = (arr) => `<ul>${arr.map((i) => `<li>${Number(i.qty) || 0} × ${esc(i.name)}</li>`).join("")}</ul>`;
-  if (keys.length <= 1) return list(items || []);
-  return keys.map((k) => `<div class="plate-label">Plato ${k}</div>${list(groups[k])}`).join("");
-}
+function itemsByPlate(items) { return platesHtml(items); }
 
 function whoLabel(o) {
   if (o.type === "plataforma") return `<span class="tag plat">${esc(PLATFORMS[o.platform] || o.platform)} #${esc(o.extRef)}</span> <strong>${esc(o.customer || "")}</strong>`;

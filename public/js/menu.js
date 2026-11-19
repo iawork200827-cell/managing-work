@@ -7,7 +7,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import {
   db, configured, $, esc, money, toMillis, local, toast, notConfiguredHtml,
-  STATUS_LABEL, DEFAULT_CONFIG, prepMinutes, estimate, isClosed, newId, showErrorsOnPage, summaryHtml, tableLabel, tableIds, BAR_ID
+  STATUS_LABEL, DEFAULT_CONFIG, prepMinutes, estimate, isClosed, newId, showErrorsOnPage, summaryHtml, tableLabel, tableIds, BAR_ID, platesHtml
 } from "./common.js";
 
 const showError = showErrorsOnPage();
@@ -32,6 +32,7 @@ const state = {
   note: "",
   // Carrito: lista de platos; cada plato es { productId: cantidad }
   plates: [{}],
+  toGo: [],   // toGo[i] = el plato i es para llevar
   cur: 0,
   pick: {},
   // Para llevar y desde casa
@@ -89,7 +90,7 @@ function validKey(key) {
 function cartItems() {
   const out = [];
   let num = 0;
-  state.plates.forEach((plate) => {
+  state.plates.forEach((plate, idx) => {
     // Los platos vacíos no cuentan: se numeran seguidos (Plato 1, 2, 3…)
     const hasItems = Object.entries(plate).some(([k, q]) => q > 0 && validKey(k));
     if (hasItems) num++;
@@ -99,6 +100,7 @@ function cartItems() {
       if (!v || qty <= 0) continue;
       const item = { id: v.p.id, name: v.opt ? `${v.p.name} de ${v.opt.toLowerCase()}` : v.p.name, price: Number(v.p.price) || 0, qty, plate: i + 1 };
       if (v.opt) item.option = v.opt;
+      if (MODE === "mesa" && state.toGo[idx]) item.toGo = true;
       out.push(item);
     }
   });
@@ -127,13 +129,7 @@ function statusSteps(status) {
   return `<div class="steps">${steps.map((s, i) => `<span class="step ${i <= idx && !done ? "on" : ""}">${STATUS_LABEL[s]}</span>`).join("")}</div>`;
 }
 
-function itemsByPlate(items) {
-  const groups = {};
-  (items || []).forEach((i) => (groups[i.plate || 1] ||= []).push(i));
-  const keys = Object.keys(groups).sort((a, b) => a - b);
-  if (keys.length <= 1) return `<ul>${(items || []).map((i) => `<li>${i.qty} × ${esc(i.name)}</li>`).join("")}</ul>`;
-  return keys.map((k) => `<div class="plate-label">Plato ${k}</div><ul>${groups[k].map((i) => `<li>${i.qty} × ${esc(i.name)}</li>`).join("")}</ul>`).join("");
-}
+function itemsByPlate(items) { return platesHtml(items); }
 
 function etaFor(o) {
   return estimate(state.queue, o.id, o.minutes, state.config);
@@ -363,9 +359,12 @@ function renderInner() {
     html += `<div class="plates" role="tablist" aria-label="Platos">` +
       state.plates.map((p, i) => {
         const n = Object.values(p).reduce((a, b) => a + b, 0);
-        return `<button data-plate="${i}" class="${i === state.cur ? "on" : ""}">Plato ${i + 1}${n ? ` · ${n}` : ""}</button>`;
+        return `<button data-plate="${i}" class="${i === state.cur ? "on" : ""}">Plato ${i + 1}${state.toGo[i] ? " (llevar)" : ""}${n ? ` · ${n}` : ""}</button>`;
       }).join("") +
       (state.plates.length < 20 ? `<button data-addplate>+ Otro plato</button>` : "") + `</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
+        <button data-togo class="toggle ${state.toGo[state.cur] ? "off" : "on"}" aria-pressed="${!!state.toGo[state.cur]}">${state.toGo[state.cur] ? `Plato ${state.cur + 1}: PARA LLEVAR ✓` : `Plato ${state.cur + 1}: comer aquí`}</button>
+        <span class="muted" style="font-size:.85rem">Toca para cambiar. Si quieren algo para llevar, ponlo en otro plato y márcalo.</span></div>
       <p class="muted" style="margin:6px 0 0;font-size:.85rem">Separa tu pedido en platos para servirlo como quieras. Todo va a la misma cuenta de la mesa.</p>`;
   }
 
@@ -531,7 +530,7 @@ async function placeOrder() {
     if (MODE !== "casa") batch.set(doc(db, "queue", ref.id), { status: "pendiente", createdAt: serverTimestamp(), minutes });
     await batch.commit();
 
-    state.plates = [{}]; state.cur = 0; state.note = ""; state.checkout = false;
+    state.plates = [{}]; state.toGo = []; state.cur = 0; state.note = ""; state.checkout = false;
     if (MODE === "casa") {
       local.set("comanda.phone", state.phone.trim());
       local.set("comanda.delivery", delivery);
@@ -591,6 +590,7 @@ document.addEventListener("click", (ev) => {
   if (d.inc) { plate[d.inc] = (plate[d.inc] || 0) + 1; render(); return; }
   if (d.dec) { plate[d.dec] = (plate[d.dec] || 0) - 1; if (plate[d.dec] <= 0) delete plate[d.dec]; render(); return; }
   if (d.plate) { state.cur = Number(d.plate); render(); return; }
+  if ("togo" in d) { state.toGo[state.cur] = !state.toGo[state.cur]; toast(state.toGo[state.cur] ? `Plato ${state.cur + 1} será para llevar` : `Plato ${state.cur + 1} es para comer aquí`); render(); return; }
   if ("addplate" in d) {
     if (state.plates.length >= 20) { toast("Máximo 20 platos por ronda"); return; }
     state.plates.push({});
