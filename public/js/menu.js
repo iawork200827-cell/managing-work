@@ -9,6 +9,9 @@ import {
   db, configured, $, esc, money, toMillis, local, toast, notConfiguredHtml,
   STATUS_LABEL, DEFAULT_CONFIG, prepMinutes, estimate, isClosed, newId, showErrorsOnPage, summaryHtml, tableLabel, tableIds, BAR_ID, platesHtml
 } from "./common.js";
+import {
+  buildItems, cleanPlates, validKey as vKey, isOut as isOutP, totals, productCard, selectionFor, handleSelectClick, promoLabels
+} from "./cart.js";
 
 const showError = showErrorsOnPage();
 
@@ -35,6 +38,9 @@ const state = {
   toGo: [],   // toGo[i] = el plato i es para llevar
   cur: 0,
   pick: {},
+  sel: {},          // carne, extras y notas escogidos por producto
+  upsell: false,    // mostrando la sugerencia de bebida
+  upsellDone: false,
   // Para llevar y desde casa
   customer: local.get("comanda.name") || "",
   myOrderId: local.get(ORDER_KEY),
@@ -60,65 +66,34 @@ const cur = () => state.config.currency || "$";
 const closed = () => isClosed(state.config);
 function notice(msg) { const n = $("notice"); n.textContent = msg || ""; n.hidden = !msg; }
 
-// ---------- carrito ----------
-// Cada plato guarda { "productoId" o "productoId::Carne": cantidad }
-const SEP = "::";
-const splitKey = (k) => { const i = k.indexOf(SEP); return i < 0 ? [k, ""] : [k.slice(0, i), k.slice(i + SEP.length)]; };
-const outOptions = () => new Set((state.config.outOptions || []).map((o) => String(o).toLowerCase()));
-function optionsOf(p) {
-  const out = outOptions();
-  return (Array.isArray(p.options) ? p.options : []).filter((o) => o && !out.has(String(o).toLowerCase()));
-}
-function hasOptions(p) { return Array.isArray(p.options) && p.options.length > 0; }
-// Quita acentos y mayúsculas para comparar ("Hígado" = "higado")
-const norm = (x) => String(x || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-// Un producto está agotado si el dueño lo bloqueó, o si su nombre lleva una carne agotada
-// (por ejemplo "Taco de arrachera" cuando la Arrachera está agotada)
-function isOut(p) {
-  if (p.available === false) return true;
-  const name = norm(p.name);
-  return [...outOptions()].some((o) => o && name.includes(norm(o)));
-}
-
-function validKey(key) {
-  const [id, opt] = splitKey(key);
-  const p = state.products.find((x) => x.id === id);
-  if (!p || isOut(p)) return null;
-  if (hasOptions(p) && !optionsOf(p).includes(opt)) return null;
-  return { p, opt };
-}
-function cartItems() {
-  const out = [];
-  let num = 0;
-  state.plates.forEach((plate, idx) => {
-    // Los platos vacíos no cuentan: se numeran seguidos (Plato 1, 2, 3…)
-    const hasItems = Object.entries(plate).some(([k, q]) => q > 0 && validKey(k));
-    if (hasItems) num++;
-    const i = num - 1;
-    for (const [key, qty] of Object.entries(plate)) {
-      const v = validKey(key);
-      if (!v || qty <= 0) continue;
-      const item = { id: v.p.id, name: v.opt ? `${v.p.name} de ${v.opt.toLowerCase()}` : v.p.name, price: Number(v.p.price) || 0, qty, plate: i + 1 };
-      if (v.opt) item.option = v.opt;
-      if (MODE === "mesa" && state.toGo[idx]) item.toGo = true;
-      out.push(item);
-    }
-  });
-  return out;
-}
+// ---------- carrito (lógica compartida en cart.js) ----------
+const isOut = (p) => isOutP(p, state.config);
+const cartItems = () => buildItems(state.plates, state.toGo, state.products, state.config, MODE === "mesa");
 const cartUnits = () => cartItems().reduce((s, i) => s + i.qty, 0);
-const cartTotal = () => cartItems().reduce((s, i) => s + i.price * i.qty, 0);
-function cleanCart() {
-  for (const plate of state.plates) {
-    for (const key of Object.keys(plate)) if (!validKey(key) || plate[key] <= 0) delete plate[key];
-  }
+const cartTotals = () => totals(cartItems(), state.products, state.config);
+const cartTotal = () => cartTotals().total;
+const cleanCart = () => cleanPlates(state.plates, state.products, state.config);
+// Categoría que se sugiere antes de enviar ("¿Le agregas una bebida?")
+const upsellCat = () => state.config.upsellCategory || "Bebidas";
+function upsellOptions() {
+  const items = cartItems();
+  const has = items.some((i) => { const p = state.products.find((x) => x.id === i.id); return p && (p.category || "Otros") === upsellCat(); });
+  if (has) return [];
+  return state.products.filter((p) => (p.category || "Otros") === upsellCat() && !isOut(p)).slice(0, 4);
 }
-// Carne elegida en cada producto (por defecto la primera disponible)
-function pickFor(p) {
-  const opts = optionsOf(p);
-  if (!opts.length) return "";
-  if (!opts.includes(state.pick[p.id])) state.pick[p.id] = opts[0];
-  return state.pick[p.id];
+function upsellHtml() {
+  // Una vez abierta la sugerencia se queda visible (aunque ya agregaran una bebida) para poder enviar
+  const list = state.products.filter((p) => (p.category || "Otros") === upsellCat() && !isOut(p)).slice(0, 4);
+  if (!list.length) return "";
+  const plate = state.plates[state.cur];
+  return `<div class="upsell"><strong>¿Le agregas algo de tomar?</strong>
+    <div class="opts">${list.map((p) => { const key = p.id + "|||"; const n = plate[key] || 0; return `<button data-inc="${esc(key)}">${esc(p.name)} ${money(p.price, cur())}${n ? ` · ${n}` : ""}</button>`; }).join("")}</div>
+    <div style="margin-top:8px"><button class="primary" data-upsellsend>${MODE === "casa" ? "Continuar" : "Enviar así"}</button></div></div>`;
+}
+function totalsHtml() {
+  const t = cartTotals();
+  if (!t.discount) return "";
+  return `<div class="promo-line">${t.discounts.map((d) => `${esc(d.name)}: −${money(d.amount, cur())}`).join(" · ")}</div>`;
 }
 
 // ---------- piezas de la vista ----------
@@ -182,7 +157,7 @@ function takeoutTicket(o) {
     <div><div class="label">Tu pedido</div><div class="big">#${esc(o.code)}</div><div class="muted">${esc(o.customer)}</div></div>
     ${main}
     ${o.status === "por_pagar" ? "" : `<div class="full">${statusSteps(o.status)}</div>`}
-    <div class="full">${summaryHtml([o.items], cur(), "Tu pedido")}
+    <div class="full">${summaryHtml([o.items], cur(), "Tu pedido", Number(o.discount) || 0)}
       <div class="muted" style="margin-top:6px">${payNote}${o.type === "casa" ? (o.delivery === "domicilio" ? " · A domicilio" : " · Pasas a recoger") : ""}</div></div>
     ${o.status !== "por_pagar" && o.status !== "cancelado" ? `<div class="full">${invoiceHtml(o.id)}</div>` : ""}
     ${done ? `<div class="full"><button data-neworder>Hacer otro pedido</button></div>` : ""}
@@ -277,7 +252,7 @@ function tabTicket(t) {
     html += `<div><div class="label">Estado</div><h2>¡Ya va para tu mesa!</h2></div>`;
   }
   if (rounds.length) {
-    html += `<div class="full">${summaryHtml(rounds.map((r) => r.items), cur(), "Resumen de lo que han pedido en esta cuenta")}</div>`;
+    html += `<div class="full">${summaryHtml(rounds.map((r) => r.items), cur(), "Resumen de lo que han pedido en esta cuenta", rounds.reduce((a, r) => a + (Number(r.discount) || 0), 0))}</div>`;
     html += `<div class="full"><details><summary class="muted">Ver por ronda</summary>`;
     rounds.forEach((r, i) => {
       html += `<div class="round"><div class="row"><strong>Ronda ${i + 1}</strong><span class="tag">${STATUS_LABEL[r.status] || r.status}</span><span class="price">${money(r.total, cur())}</span></div>${itemsByPlate(r.items)}</div>`;
@@ -299,6 +274,7 @@ function checkoutHtml() {
     <button data-back>← Volver al menú</button>
     <h2 style="margin-top:12px">Tu pedido</h2>
     ${itemsByPlate(items)}
+    ${totalsHtml()}
     <div class="price">Total: ${money(cartTotal(), cur())}${delivery === "domicilio" ? ' <span class="muted">· envío gratis</span>' : ""}</div>
     <form id="casaForm" class="form" style="margin-top:14px">
       <label>Tu nombre<input id="custName" required maxlength="60" autocomplete="name" value="${esc(state.customer)}"></label>
@@ -378,28 +354,13 @@ function renderInner() {
     .forEach((p) => (groups[p.category || "Otros"] ||= []).push(p));
   const plate = state.plates[state.cur];
   const off = closed();
+  const promos = promoLabels(state.config);
+  if (promos.length && !off) html = html.replace('<div class="cats">', `<div class="notice promo">Hoy: ${promos.map(esc).join(" · ")}</div><div class="cats">`);
   for (const [cat, items] of Object.entries(groups)) {
     html += `<section class="section"><h2>${esc(cat)}</h2>`;
     for (const p of items) {
-      const out = isOut(p);
-      const withOpts = hasOptions(p);
-      const opts = optionsOf(p);
-      const noneLeft = withOpts && !opts.length;
-      const opt = pickFor(p);
-      const key = opt ? p.id + SEP + opt : p.id;
-      const n = plate[key] || 0;
-      // Lo que ya lleva este plato de este producto, por carne
-      const chosen = withOpts ? Object.entries(plate).filter(([k, q]) => q > 0 && splitKey(k)[0] === p.id).map(([k, q]) => `${q} ${splitKey(k)[1].toLowerCase()}`) : [];
-      const canAdd = !out && !off && !noneLeft;
-      html += `<div class="item ${out || noneLeft ? "out" : ""}">
-        <div><h3>${esc(p.name)}</h3>${p.description ? `<p class="muted">${esc(p.description)}</p>` : ""}
-          <div class="price" style="margin-top:6px">${money(p.price, cur())}</div>
-          ${withOpts && canAdd ? `<div class="opts" role="radiogroup" aria-label="Carne para ${esc(p.name)}">${opts.map((o) => `<button role="radio" aria-checked="${o === opt}" class="${o === opt ? "on" : ""}" data-pick="${esc(p.id)}" data-opt="${esc(o)}">${esc(o)}</button>`).join("")}</div>` : ""}
-          ${chosen.length ? `<div class="muted chosen">En este plato: ${esc(chosen.join(", "))}</div>` : ""}</div>
-        <div>${out || noneLeft ? '<span class="out-tag">Agotado</span>' : off ? "" :
-          `<div class="qty">${n ? `<button aria-label="Quitar ${esc(p.name)}${opt ? " de " + esc(opt) : ""}" data-dec="${esc(key)}">−</button><span class="mono">${n}</span>` : ""}
-           <button class="${n ? "" : "primary"}" aria-label="Agregar ${esc(p.name)}${opt ? " de " + esc(opt) : ""}" data-inc="${esc(key)}">+</button></div>`}</div>
-      </div>`;
+      const sel = selectionFor(state.sel, p, state.config);
+      html += productCard(p, { config: state.config, plate, sel, canAdd: !off, cur: cur() });
     }
     html += "</section>";
   }
@@ -415,12 +376,12 @@ function renderCart() {
   bar.hidden = false;
   if (MODE === "casa") {
     if (state.checkout) { bar.hidden = true; return; }
-    bar.innerHTML = `<div class="in"><span class="sum">${units} ${units === 1 ? "pieza" : "piezas"} · ${money(cartTotal(), cur())}</span>
+    bar.innerHTML = (state.upsell ? `<div class="in">${upsellHtml()}</div>` : "") + `<div class="in">${totalsHtml()}</div><div class="in"><span class="sum">${units} ${units === 1 ? "pieza" : "piezas"} · ${money(cartTotal(), cur())}</span>
       <button class="primary" data-checkout>Continuar</button></div>`;
     return;
   }
   const label = MODE === "mesa" ? (!inTab() && state.confirmNewTab ? "Abrir cuenta nueva y enviar" : "Enviar a cocina") : "Enviar pedido";
-  bar.innerHTML = `<div class="in">
+  bar.innerHTML = (state.upsell ? `<div class="in">${upsellHtml()}</div>` : "") + `<div class="in">${totalsHtml()}</div><div class="in">
     <span class="sum">${units} ${units === 1 ? "pieza" : "piezas"} · ${money(cartTotal(), cur())}</span>
     ${MODE === "llevar" ? `<input id="custName" placeholder="Tu nombre" autocomplete="given-name" maxlength="60" value="${esc(state.customer)}" aria-label="Tu nombre">` : ""}
     <input id="custNote" placeholder="Nota (sin cebolla, salsa aparte…)" maxlength="200" value="${esc(state.note)}" aria-label="Nota para la cocina">
@@ -494,6 +455,9 @@ async function placeOrder() {
       return;
     }
   }
+  // Sugerencia de bebida (una vez por pedido)
+  if (!state.upsellDone && upsellOptions().length) { state.upsell = true; state.upsellDone = true; renderCart(); return; }
+  state.upsell = false;
   state.confirmNewTab = false;
   state.sending = true; renderCart();
   try {
@@ -503,8 +467,10 @@ async function placeOrder() {
     const order = {
       type: MODE, items, minutes, status: MODE === "casa" ? "por_pagar" : "pendiente", paid: false, createdAt: serverTimestamp(),
       code: ref.id.replace(/[^a-zA-Z0-9]/g, "").slice(-4).toUpperCase(),
-      total: Math.round(items.reduce((s, i) => s + i.price * i.qty, 0) * 100) / 100
+      total: cartTotals().total
     };
+    const tt = cartTotals();
+    if (tt.discount) { order.discount = tt.discount; order.promos = tt.discounts.map((d) => d.name.slice(0, 60)); }
     const plates = new Set(items.map((i) => i.plate)).size;
     if (plates > 1) order.plates = plates;
     if (state.note.trim()) order.note = state.note.trim().slice(0, 200);
@@ -523,6 +489,7 @@ async function placeOrder() {
     if (MODE === "mesa") {
       // Copia de la ronda para que la mesa vea su cuenta
       const round = { items, total: order.total, status: "pendiente", createdAt: serverTimestamp(), minutes };
+      if (order.discount) round.discount = order.discount;
       if (order.plates) round.plates = order.plates;
       batch.set(doc(db, "tabs", order.session, "rounds", ref.id), round);
     }
@@ -530,7 +497,7 @@ async function placeOrder() {
     if (MODE !== "casa") batch.set(doc(db, "queue", ref.id), { status: "pendiente", createdAt: serverTimestamp(), minutes });
     await batch.commit();
 
-    state.plates = [{}]; state.toGo = []; state.cur = 0; state.note = ""; state.checkout = false;
+    state.plates = [{}]; state.toGo = []; state.cur = 0; state.note = ""; state.checkout = false; state.upsellDone = false; state.upsell = false;
     if (MODE === "casa") {
       local.set("comanda.phone", state.phone.trim());
       local.set("comanda.delivery", delivery);
@@ -586,7 +553,12 @@ document.addEventListener("click", (ev) => {
   const d = t.dataset;
   const plate = state.plates[state.cur];
   if (d.cat) { state.catFilter = d.cat; render(); return; }
-  if (d.pick) { state.pick[d.pick] = d.opt; render(); return; }
+  if (handleSelectClick(d, state.sel, state.products, state.config)) { render(); return; }
+  if ("upsellsend" in d) {
+    state.upsell = false;
+    if (MODE === "casa") { state.checkout = true; window.scrollTo({ top: 0 }); render(); } else placeOrder();
+    return;
+  }
   if (d.inc) { plate[d.inc] = (plate[d.inc] || 0) + 1; render(); return; }
   if (d.dec) { plate[d.dec] = (plate[d.dec] || 0) - 1; if (plate[d.dec] <= 0) delete plate[d.dec]; render(); return; }
   if (d.plate) { state.cur = Number(d.plate); render(); return; }
@@ -599,7 +571,10 @@ document.addEventListener("click", (ev) => {
     render(); return;
   }
   if (t.id === "placeOrder" && MODE !== "casa") { placeOrder(); return; }
-  if ("checkout" in d) { state.checkout = true; window.scrollTo({ top: 0 }); render(); return; }
+  if ("checkout" in d) {
+    if (!state.upsellDone && upsellOptions().length) { state.upsell = true; state.upsellDone = true; renderCart(); return; }
+    state.checkout = true; window.scrollTo({ top: 0 }); render(); return;
+  }
   if ("back" in d) { state.checkout = false; render(); return; }
   if (d.delivery) { state.delivery = d.delivery; render(); return; }
   if (d.copy) {

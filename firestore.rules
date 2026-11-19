@@ -58,7 +58,9 @@ service cloud.firestore {
       let d = request.resource.data;
       return d.keys().hasOnly(['type', 'customer', 'phone', 'delivery', 'address', 'table', 'session', 'note',
                                'items', 'plates', 'total', 'minutes', 'status', 'createdAt', 'code', 'paid', 'takenBy',
-                               'platform', 'extRef'])
+                               'platform', 'extRef', 'discount', 'promos'])
+        && (!('discount' in d) || (d.discount is number && d.discount >= 0))
+        && (!('promos' in d) || (d.promos is list && d.promos.size() <= 10))
         && (!('takenBy' in d) || (d.takenBy is string && d.takenBy.size() <= 40 && isTeam()))
         && d.paid == false
         && d.createdAt == request.time
@@ -211,7 +213,7 @@ service cloud.firestore {
       // Copia de cada ronda para que la mesa vea su cuenta
       match /rounds/{id} {
         allow read: if true;
-        allow create: if request.resource.data.keys().hasOnly(['items', 'total', 'status', 'createdAt', 'minutes', 'plates'])
+        allow create: if request.resource.data.keys().hasOnly(['items', 'total', 'status', 'createdAt', 'minutes', 'plates', 'discount'])
           && request.resource.data.status == 'pendiente'
           && request.resource.data.createdAt == request.time
           && getAfter(/databases/$(database)/documents/orders/$(id)).data.session == session

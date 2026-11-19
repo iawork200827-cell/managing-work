@@ -10,6 +10,7 @@ import {
   db, auth, configured, OWNER_EMAILS, $, esc, money, toMillis, local, toast, notConfiguredHtml,
   STATUS_LABEL, DEFAULT_CONFIG, prepMinutes, newId, showErrorsOnPage, summaryHtml, isClosed, tableLabel, tableIds, BAR_ID, platesHtml, PLATFORMS
 } from "./common.js";
+import { buildItems, isOut as isOutP, totals, productCard, selectionFor, handleSelectClick } from "./cart.js";
 
 showErrorsOnPage();
 const params = new URLSearchParams(location.search);
@@ -29,39 +30,16 @@ const state = {
   view: "mesas", config: { ...DEFAULT_CONFIG }, products: [],
   tabs: {}, rounds: {}, active: [],
   // Pedido que se está capturando
-  target: null, plates: [{}], toGo: [], cur: 0, pick: {}, note: "", customer: "", phone: "", extRef: "", sending: false,
+  target: null, plates: [{}], toGo: [], cur: 0, sel: {}, pick: {}, note: "", customer: "", phone: "", extRef: "", sending: false,
   openFor: null, openName: "", unsubs: []
 };
 const cur = () => state.config.currency || "$";
 function notice(msg) { const n = $("notice"); n.textContent = msg || ""; n.hidden = !msg; }
 
-// ---------- menú (carnes y agotados, igual que la vista del cliente) ----------
-const outSet = () => new Set((state.config.outOptions || []).map((o) => norm(o)));
-const optionsOf = (p) => (Array.isArray(p.options) ? p.options : []).filter((o) => o && !outSet().has(norm(o)));
-const hasOptions = (p) => Array.isArray(p.options) && p.options.length > 0;
-function isOut(p) { if (p.available === false) return true; const n = norm(p.name); return [...outSet()].some((o) => o && n.includes(o)); }
-function validKey(key) {
-  const [id, opt] = splitKey(key);
-  const p = state.products.find((x) => x.id === id);
-  if (!p || isOut(p)) return null;
-  if (hasOptions(p) && !optionsOf(p).includes(opt)) return null;
-  return { p, opt };
-}
-function cartItems() {
-  const out = []; let num = 0;
-  state.plates.forEach((plate, idx) => {
-    if (Object.entries(plate).some(([k, q]) => q > 0 && validKey(k))) num++;
-    for (const [key, qty] of Object.entries(plate)) {
-      const v = validKey(key); if (!v || qty <= 0) continue;
-      const item = { id: v.p.id, name: v.opt ? `${v.p.name} de ${v.opt.toLowerCase()}` : v.p.name, price: Number(v.p.price) || 0, qty, plate: num };
-      if (v.opt) item.option = v.opt;
-      if (state.target && state.target.type === "mesa" && state.toGo[idx]) item.toGo = true;
-      out.push(item);
-    }
-  });
-  return out;
-}
-function pickFor(p) { const o = optionsOf(p); if (!o.length) return ""; if (!o.includes(state.pick[p.id])) state.pick[p.id] = o[0]; return state.pick[p.id]; }
+// ---------- menú (lógica compartida con la vista del cliente, en cart.js) ----------
+const isOut = (p) => isOutP(p, state.config);
+const cartItems = () => buildItems(state.plates, state.toGo, state.products, state.config, !!(state.target && state.target.type === "mesa"));
+const cartTotals = () => totals(cartItems(), state.products, state.config);
 
 // ---------- vistas ----------
 function render() {
@@ -117,7 +95,7 @@ function tablesHtml() {
     for (const tab of tabs) {
       const rounds = tabRounds(tab.id);
       html += `<div class="order"><div class="row"><strong>${esc(tab.name || "Cuenta")}</strong><span class="mono muted">${esc(tab.code)}</span>${tab.billRequested ? '<span class="tag bill">Pidió la cuenta</span>' : ""}</div>
-        ${rounds.length ? summaryHtml(rounds.map((r) => r.items), cur(), "Lo que han pedido") : '<p class="muted" style="margin:0">Sin pedidos todavía</p>'}
+        ${rounds.length ? summaryHtml(rounds.map((r) => r.items), cur(), "Lo que han pedido", rounds.reduce((a, r) => a + (Number(r.discount) || 0), 0)) : '<p class="muted" style="margin:0">Sin pedidos todavía</p>'}
         <div class="acts"><button class="primary" data-addto="${esc(tab.id)}">Agregar pedido</button>
           ${rounds.length ? `<button data-close="${esc(tab.id)}" data-method="efectivo">Cobrar efectivo</button><button data-close="${esc(tab.id)}" data-method="tarjeta">Cobrar tarjeta</button>` : ""}</div></div>`;
     }
@@ -197,15 +175,7 @@ function builderHtml() {
   const plate = state.plates[state.cur];
   for (const [cat, items] of Object.entries(groups)) {
     html += `<section class="section"><h2>${esc(cat)}</h2>`;
-    for (const p of items) {
-      const out = isOut(p) || (hasOptions(p) && !optionsOf(p).length);
-      const opt = pickFor(p); const key = opt ? p.id + SEP + opt : p.id; const n = plate[key] || 0;
-      const chosen = hasOptions(p) ? Object.entries(plate).filter(([k, q]) => q > 0 && splitKey(k)[0] === p.id).map(([k, q]) => `${q} ${splitKey(k)[1].toLowerCase()}`) : [];
-      html += `<div class="item ${out ? "out" : ""}"><div><h3>${esc(p.name)}</h3><div class="price">${money(p.price, cur())}</div>
-        ${hasOptions(p) && !out ? `<div class="opts">${optionsOf(p).map((o) => `<button class="${o === opt ? "on" : ""}" data-pick="${esc(p.id)}" data-opt="${esc(o)}">${esc(o)}</button>`).join("")}</div>` : ""}
-        ${chosen.length ? `<div class="muted chosen">En este plato: ${esc(chosen.join(", "))}</div>` : ""}</div>
-        <div>${out ? '<span class="out-tag">Agotado</span>' : `<div class="qty">${n ? `<button data-dec="${esc(key)}">−</button><span class="mono">${n}</span>` : ""}<button class="${n ? "" : "primary"}" data-inc="${esc(key)}">+</button></div>`}</div></div>`;
-    }
+    for (const p of items) html += productCard(p, { config: state.config, plate, sel: selectionFor(state.sel, p, state.config), canAdd: true, cur: cur() });
     html += "</section>";
   }
   return html;
@@ -218,7 +188,8 @@ function renderBar() {
   if (!units) { bar.hidden = true; return; }
   const active = document.activeElement && document.activeElement.id;
   bar.hidden = false;
-  bar.innerHTML = `<div class="in"><span class="sum">${units} ${units === 1 ? "pieza" : "piezas"} · ${money(items.reduce((s, i) => s + i.price * i.qty, 0), cur())}</span>
+  const tt = cartTotals();
+  bar.innerHTML = (tt.discount ? `<div class="in"><div class="promo-line">${tt.discounts.map((d) => `${esc(d.name)}: −${money(d.amount, cur())}`).join(" · ")}</div></div>` : "") + `<div class="in"><span class="sum">${units} ${units === 1 ? "pieza" : "piezas"} · ${money(tt.total, cur())}</span>
     <input id="custNote" placeholder="Nota para cocina" maxlength="200" value="${esc(state.note)}">
     <button class="primary" id="sendOrder" ${state.sending ? "disabled" : ""}>Enviar a cocina</button></div>`;
   if (active && $(active)) $(active).focus();
@@ -259,9 +230,11 @@ async function sendOrder() {
   const order = {
     type: t.type, items, minutes, status: "pendiente", paid: false, createdAt: serverTimestamp(),
     code: ref.id.replace(/[^a-zA-Z0-9]/g, "").slice(-4).toUpperCase(),
-    total: Math.round(items.reduce((s, i) => s + i.price * i.qty, 0) * 100) / 100,
+    total: cartTotals().total,
     takenBy: state.name.slice(0, 40)
   };
+  const tt = cartTotals();
+  if (tt.discount) { order.discount = tt.discount; order.promos = tt.discounts.map((d) => d.name.slice(0, 60)); }
   const plates = new Set(items.map((i) => i.plate)).size;
   if (plates > 1) order.plates = plates;
   if (state.note.trim()) order.note = state.note.trim().slice(0, 200);
@@ -273,6 +246,7 @@ async function sendOrder() {
   b.set(doc(db, "queue", ref.id), { status: "pendiente", createdAt: serverTimestamp(), minutes });
   if (t.type === "mesa") {
     const round = { items, total: order.total, status: "pendiente", createdAt: serverTimestamp(), minutes };
+    if (order.discount) round.discount = order.discount;
     if (order.plates) round.plates = order.plates;
     b.set(doc(db, "tabs", t.session, "rounds", ref.id), round);
   }
@@ -329,7 +303,7 @@ document.addEventListener("click", (ev) => {
   if ("newtakeout" in d) { startOrder({ type: "llevar" }); return; }
   if (d.newplatform) { startOrder({ type: "plataforma", platform: d.newplatform }); return; }
   if ("back" in d) { state.target = null; render(); return; }
-  if (d.pick) { state.pick[d.pick] = d.opt; render(); return; }
+  if (handleSelectClick(d, state.sel, state.products, state.config)) { render(); return; }
   if (d.inc) { plate[d.inc] = (plate[d.inc] || 0) + 1; render(); return; }
   if (d.dec) { plate[d.dec] = (plate[d.dec] || 0) - 1; if (plate[d.dec] <= 0) delete plate[d.dec]; render(); return; }
   if (d.plate) { state.cur = Number(d.plate); render(); return; }

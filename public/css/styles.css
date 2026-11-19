@@ -177,3 +177,19 @@ input[type="checkbox"] { width: auto }
 .prow.voided { opacity: .6 } .prow.voided .price { text-decoration: line-through }
 .tag.plat { background: var(--ink); color: var(--bg) }
 .plate-label.togo { color: var(--bad) } 
+
+/* Fotos, extras, promociones y sugerencias */
+.item { grid-template-columns: auto 1fr auto }
+.item:not(:has(.pphoto)) { grid-template-columns: 1fr auto }
+.pphoto { width: 72px; height: 72px; object-fit: cover; border-radius: 10px; align-self: start }
+.pbody { min-width: 0 }
+.opts.notes button { font-size: .75rem; padding: 4px 9px }
+.opts button.on:not(.toggle) { background: var(--ink); color: var(--bg); border-color: var(--ink) }
+.tag.pop { background: var(--hi-soft); color: var(--warn, #b26a00) }
+.notice.promo { background: var(--accent-soft); margin: 10px 0 0 }
+.promo-line { font-size: .85rem; color: var(--ok); font-weight: 600 }
+.upsell { background: var(--hi-soft); border-radius: var(--r); padding: 10px 12px; width: 100% }
+/* Con foto: foto + texto arriba; cantidad abajo a la derecha (para que las opciones tengan espacio) */
+.item:has(.pphoto) { grid-template-columns: 72px 1fr }
+.item:has(.pphoto) > div:last-child { grid-column: 1 / -1; justify-self: end }
+.tag { white-space: nowrap }

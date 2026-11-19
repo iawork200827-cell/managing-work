@@ -130,7 +130,7 @@ function render() {
 
   const focusId = document.activeElement && document.activeElement.id;
   const keep = {};
-  if (!state.resetForms) document.querySelectorAll("#app form input").forEach((i) => { if (i.id && i.type !== "checkbox") keep[i.id] = i.value; });
+  if (!state.resetForms) document.querySelectorAll("#app form input").forEach((i) => { if (i.id && i.type !== "checkbox" && i.type !== "file") keep[i.id] = i.value; });
   state.resetForms = false;
 
   const pend = [...state.active.values()].filter((o) => o.status === "pendiente" || o.status === "por_pagar").length;
@@ -140,7 +140,7 @@ function render() {
     ["pedidos", `Pedidos${pend ? ` (${pend})` : ""}`],
     ["mesas", `Mesas${openTables ? ` (${openTables})` : ""}${bills ? " · cuenta" : ""}`],
     ...(isMgr() ? [] : [["ventas", "Ventas"]]), ["facturas", `Facturas${(state.invoices || []).filter((i) => !i.done).length ? ` (${(state.invoices || []).filter((i) => !i.done).length})` : ""}`],
-    ["productos", "Productos"], ["ajustes", "Ajustes"], ["qr", "Códigos QR"]
+    ["productos", "Productos"], ["promos", "Promociones"], ["ajustes", "Ajustes"], ["qr", "Códigos QR"]
   ];
   const closed = isClosed(state.config);
   let html = `<div class="closed-bar no-print ${closed ? "off" : ""}">
@@ -158,6 +158,7 @@ function render() {
   if (state.tab === "qr") html += qrHtml();
   if (state.tab === "ventas" && !isMgr()) html += salesHtml();
   if (state.tab === "facturas") html += invoicesHtml();
+  if (state.tab === "promos") html += promosHtml();
   app.innerHTML = html;
   if (state.tab === "qr") drawQrs();
 
@@ -289,7 +290,7 @@ function tablesHtml() {
     const pending = rounds.filter((r) => r.status !== "entregado").length;
     html += `<div class="order"><div class="row"><h3>${esc(tableLabel(tab.table))}${perTable[tab.table] > 1 ? ` <span class="tag">${perTable[tab.table]} cuentas</span>` : ""}</h3>${tab.billRequested ? '<span class="tag bill">Pidió la cuenta</span>' : ""}</div>
       <div class="row"><span class="muted">${tab.name ? `<strong>${esc(tab.name)}</strong> · ` : ""}Cuenta <span class="mono">${esc(tab.code)}</span>${tab.openedBy ? ` · abrió ${esc(tab.openedBy)}` : ""} · abierta ${tab.openedAt ? fmtTime(toMillis(tab.openedAt)) : ""} · ${rounds.length} ${rounds.length === 1 ? "ronda" : "rondas"}${pending ? ` · ${pending} en cocina` : ""}</span><span class="price">${money(total, cur())}</span></div>
-      ${summaryHtml(rounds.map((r) => r.items), cur(), "Resumen de la cuenta")}
+      ${summaryHtml(rounds.map((r) => r.items), cur(), "Resumen de la cuenta", rounds.reduce((a, r) => a + (Number(r.discount) || 0), 0))}
       <details><summary class="muted">Ver por ronda</summary>${rounds.map((r, i) => `<div class="round"><div class="row"><strong>Ronda ${i + 1}</strong><span class="muted">${STATUS_LABEL[r.status]}</span><span class="price">${money(r.total, cur())}</span></div>${itemsByPlate(r.items)}</div>`).join("")}</details>
       <div class="acts"><button class="primary" data-close="${esc(tab.id)}" data-method="efectivo">Cobrado en efectivo</button>
         <button data-close="${esc(tab.id)}" data-method="tarjeta">Cobrado con tarjeta</button></div></div>`;
@@ -305,6 +306,10 @@ function productsHtml() {
     <label>Categoría<input id="pCat" list="catlist" maxlength="40" placeholder="Tacos, Platillos, Bebidas…" value="${esc(e?.category)}"></label>
     <label>Descripción<input id="pDesc" maxlength="160" value="${esc(e?.description)}"></label>
     <label>Carnes para escoger (separadas por coma)<input id="pOpts" maxlength="300" placeholder="Pastor, Bistec, Barbacoa…" value="${esc((e?.options || []).join(", "))}"></label>
+    <label>Extras con precio (nombre:precio, separados por coma)<input id="pExtras" maxlength="300" placeholder="Extra queso:10, Aguacate:15" value="${esc((e?.extras || []).map((x) => x.name + ":" + x.price).join(", "))}"></label>
+    <label>Foto (opcional)<input id="pPhoto" type="file" accept="image/*"></label>
+    <label class="check"><input id="pPopular" type="checkbox" ${e?.popular ? "checked" : ""}> Marcar como "Lo más pedido"</label>
+    ${e?.photo ? `<div class="check" style="display:flex;gap:8px;align-items:center"><img src="${esc(e.photo)}" alt="" style="width:56px;height:56px;object-fit:cover;border-radius:8px"><label class="check"><input id="pPhotoDel" type="checkbox"> Quitar foto</label></div>` : ""}
     <datalist id="catlist">${[...new Set(state.products.map((p) => p.category).filter(Boolean))].map((c) => `<option value="${esc(c)}">`).join("")}</datalist>
     <div style="display:flex;gap:6px;flex-wrap:wrap"><button class="primary" type="submit">${e ? "Guardar cambios" : "Agregar producto"}</button>
       ${e ? '<button type="button" data-canceledit>Cancelar</button>' : ""}</div>
@@ -328,7 +333,7 @@ function productsHtml() {
     const on = p.available !== false;
     const byMeat = on && [...outOpts].some((o) => p.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").includes(o.normalize("NFD").replace(/[\u0300-\u036f]/g, "")));
     html += `<div class="prow"><div><strong>${esc(p.name)}</strong> <span class="price muted">${money(p.price, cur())}</span>
-        <div class="muted" style="font-size:.82rem">${esc(p.category || "Otros")}${(p.options || []).length ? " · " + esc(p.options.join(", ")) : ""}${byMeat ? ' · <span class="late">agotado por la carne</span>' : ""}</div></div>
+        <div class="muted" style="font-size:.82rem">${esc(p.category || "Otros")}${(p.options || []).length ? " · " + esc(p.options.join(", ")) : ""}${byMeat ? ' · <span class="late">agotado por la carne</span>' : ""}${(p.extras || []).length ? " · extras: " + esc(p.extras.map((x) => x.name).join(", ")) : ""}${p.photo ? " · con foto" : ""}${p.popular ? ' · <span class="tag pop">Lo más pedido</span>' : ""}</div></div>
       <div class="acts">
         <button class="toggle ${on ? "on" : "off"}" data-toggle="${esc(p.id)}" aria-pressed="${!on}">${on ? "Disponible" : "Agotado"}</button>
         <button data-edit="${esc(p.id)}">Editar</button>
@@ -349,6 +354,8 @@ function settingsHtml() {
     <label>Número de mesas<input id="sTables" type="number" min="1" max="200" value="${esc(c.tables)}"></label>
     <label>Comisión de Uber Eats (%)<input id="sUberFee" type="number" min="0" max="60" step="0.1" value="${esc(c.uberFee ?? "")}" placeholder="Ej. 30"></label>
     <label>Comisión de DiDi Food (%)<input id="sDidiFee" type="number" min="0" max="60" step="0.1" value="${esc(c.didiFee ?? "")}" placeholder="Ej. 25"></label>
+    <label>Notas rápidas en la comida (separadas por coma)<input id="sNotes" maxlength="200" value="${esc((c.quickNotes && c.quickNotes.length ? c.quickNotes : ["Con todo", "Sin cebolla", "Sin cilantro", "Sin salsa"]).join(", "))}"></label>
+    <label>Categoría que se sugiere antes de enviar<input id="sUpsell" maxlength="40" value="${esc(c.upsellCategory || "Bebidas")}"></label>
     <label class="check"><input id="sBar" type="checkbox" ${c.bar !== false ? "checked" : ""}> Tenemos barra (con su propio QR)</label>
     <label>Banco (para pedidos desde casa)<input id="sBank" maxlength="40" value="${esc(c.bank)}" placeholder="BBVA, Banorte…"></label>
     <label>Titular de la cuenta<input id="sHolder" maxlength="60" value="${esc(c.holder)}"></label>
@@ -444,6 +451,35 @@ function drawQrs() {
     else el.textContent = el.dataset.url;
   });
 }
+
+// ---------- promociones ----------
+const DAYS = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
+function promosHtml() {
+  const promos = state.config.promos || [];
+  const cats = [...new Set(state.products.map((p) => p.category || "Otros"))];
+  const targetLabel = (t) => { const [k, v] = String(t).split(/:(.*)/s); if (k === "cat") return "Categoría " + v; const p = state.products.find((x) => x.id === v); return p ? p.name : "(producto borrado)"; };
+  let html = `<form class="form" id="promoForm">
+    <h3 style="grid-column:1/-1;margin:0">Nueva promoción</h3>
+    <label>Nombre que ve el cliente<input id="prName" required maxlength="60" placeholder="Martes 2×1 en tacos"></label>
+    <label>Tipo<select id="prKind"><option value="2x1">2×1 (de cada 2, uno gratis)</option><option value="pct">% de descuento</option></select></label>
+    <label>¿En qué?<select id="prTarget">${cats.map((c) => `<option value="cat:${esc(c)}">Toda la categoría: ${esc(c)}</option>`).join("")}${state.products.map((p) => `<option value="prod:${esc(p.id)}">${esc(p.name)}</option>`).join("")}</select></label>
+    <label>% de descuento (si aplica)<input id="prPct" type="number" min="1" max="100" placeholder="10"></label>
+    <label>Desde (hora)<input id="prFrom" type="time"></label>
+    <label>Hasta (hora)<input id="prTo" type="time"></label>
+    <div style="grid-column:1/-1" class="opts">${DAYS.map((d, i) => `<label class="check"><input type="checkbox" class="prDay" value="${i}"> ${d}</label>`).join("")}</div>
+    <p class="muted" style="grid-column:1/-1;margin:0">Si no marcas días aplica todos los días; si no pones horas, todo el día. Para un combo (ej. 5 tacos + refresco), créalo como producto en Productos.</p>
+    <div style="grid-column:1/-1"><button class="primary" type="submit">Agregar promoción</button></div></form>`;
+  if (!promos.length) return html + '<div class="empty">No hay promociones todavía.</div>';
+  html += '<div class="plist">';
+  promos.forEach((p, i) => {
+    html += `<div class="prow ${p.active === false ? "voided" : ""}"><div><strong>${esc(p.name)}</strong> <span class="tag">${p.kind === "2x1" ? "2×1" : (p.pct || 0) + "%"}</span>
+      <div class="muted" style="font-size:.85rem">${esc(targetLabel(p.target))} · ${p.days && p.days.length ? p.days.map((d) => DAYS[d]).join(", ") : "Todos los días"} · ${p.from || p.to ? `${esc(p.from || "00:00")}–${esc(p.to || "24:00")}` : "todo el día"}</div></div>
+      <div class="acts"><button class="toggle ${p.active === false ? "off" : "on"}" data-promotoggle="${i}">${p.active === false ? "Pausada" : "Activa"}</button>
+        <button class="danger" data-promodel="${i}">Borrar</button></div></div>`;
+  });
+  return html + "</div>";
+}
+function savePromos(promos, msg) { return write(() => setDoc(doc(db, "config", "shop"), { ...state.config, promos }), msg); }
 
 // ---------- solicitudes de factura ----------
 function invoicesHtml() {
@@ -576,6 +612,25 @@ function voidSale(key, restore) {
   }, restore ? "Venta restaurada" : "Venta anulada: ya no suma");
 }
 
+// Reduce la foto a 480 px (JPEG) para guardarla junto con el producto sin pesar mucho
+function resizePhoto(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const max = 480, k = Math.min(1, max / Math.max(img.width, img.height));
+      const c = document.createElement("canvas"); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      let q = 0.75, out = c.toDataURL("image/jpeg", q);
+      while (out.length > 180000 && q > 0.35) { q -= 0.1; out = c.toDataURL("image/jpeg", q); }
+      resolve(out);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("No se pudo leer la foto")); };
+    img.src = url;
+  });
+}
+
 // ---------- escrituras ----------
 async function write(fn, okMsg) {
   try { await fn(); if (okMsg) toast(okMsg); }
@@ -654,6 +709,11 @@ document.addEventListener("click", (ev) => {
     voidSale(d.void, false); return;
   }
   if (d.restore) { voidSale(d.restore, true); return; }
+  if (d.promotoggle) { const promos = [...(state.config.promos || [])]; const i = Number(d.promotoggle); promos[i] = { ...promos[i], active: promos[i].active === false }; savePromos(promos, promos[i].active ? "Promoción activada" : "Promoción pausada"); return; }
+  if (d.promodel) {
+    if (!t.dataset.confirm) { t.dataset.confirm = "1"; t.textContent = "¿Borrar? Toca otra vez"; return; }
+    const promos = [...(state.config.promos || [])]; promos.splice(Number(d.promodel), 1); savePromos(promos, "Promoción borrada"); return;
+  }
   if (d.invoice) { write(() => updateDoc(doc(db, "invoices", d.invoice), { done: d.done === "1" }), d.done === "1" ? "Factura marcada como hecha" : null); return; }
   if (d.confirmpay) {
     const o = allOrders().find((x) => x.id === d.confirmpay);
@@ -753,16 +813,39 @@ document.addEventListener("submit", (ev) => {
     signInWithEmailAndPassword(auth, $("loginEmail").value.trim(), $("loginPass").value)
       .catch(() => toast("Correo o contraseña incorrectos"));
   }
+  if (id === "promoForm") {
+    const kind = $("prKind").value, pct = Number($("prPct").value) || 0;
+    if (kind === "pct" && (pct <= 0 || pct > 100)) { toast("Pon el % de descuento"); return; }
+    const promo = { id: newId(8), name: $("prName").value.trim().slice(0, 60), kind, target: $("prTarget").value, pct: kind === "pct" ? pct : 0,
+      days: [...document.querySelectorAll(".prDay:checked")].map((x) => Number(x.value)), from: $("prFrom").value, to: $("prTo").value, active: true };
+    if (!promo.name) return;
+    state.resetForms = true;
+    savePromos([...(state.config.promos || []), promo], "Promoción agregada");
+    return;
+  }
   if (id === "pform") {
     const body = {
       name: $("pName").value.trim(), price: Math.max(0, Number($("pPrice").value) || 0),
       category: $("pCat").value.trim() || "Otros", description: $("pDesc").value.trim(),
-      options: [...new Set($("pOpts").value.split(",").map((x) => x.trim()).filter(Boolean))].slice(0, 30)
+      options: [...new Set($("pOpts").value.split(",").map((x) => x.trim()).filter(Boolean))].slice(0, 30),
+      // "Extra queso:10, Aguacate:15" -> [{name, price}]
+      extras: $("pExtras").value.split(",").map((x) => x.trim()).filter(Boolean).slice(0, 15).map((x) => {
+        const i = x.lastIndexOf(":");
+        return i < 0 ? { name: x.replace(/[|+]/g, " ").trim(), price: 0 } : { name: x.slice(0, i).replace(/[|+]/g, " ").trim(), price: Math.max(0, Number(x.slice(i + 1)) || 0) };
+      }).filter((x) => x.name),
+      popular: $("pPopular").checked
     };
     if (!body.name) return;
+    const file = $("pPhoto").files && $("pPhoto").files[0];
+    const removePhoto = $("pPhotoDel") && $("pPhotoDel").checked;
     state.resetForms = true;
-    if (state.editId) { const pid = state.editId; state.editId = null; write(() => updateDoc(doc(db, "products", pid), body), "Producto actualizado"); }
-    else write(() => addDoc(collection(db, "products"), { ...body, available: true, order: Date.now() }), "Producto agregado");
+    const editId = state.editId; state.editId = null;
+    write(async () => {
+      if (file) body.photo = await resizePhoto(file);
+      else if (removePhoto) body.photo = "";
+      if (editId) await updateDoc(doc(db, "products", editId), body);
+      else await addDoc(collection(db, "products"), { ...body, available: true, order: Date.now() });
+    }, editId ? "Producto actualizado" : "Producto agregado");
     render();
   }
   if (id === "sform") {
@@ -776,6 +859,8 @@ document.addEventListener("submit", (ev) => {
       capacity: Math.min(10, Math.max(1, Number($("sCap").value) || 1)),
       tables: Math.min(200, Math.max(1, Number($("sTables").value) || 1)),
       bar: $("sBar").checked,
+      quickNotes: $("sNotes").value.split(",").map((x) => x.replace(/[|+]/g, " ").trim()).filter(Boolean).slice(0, 12),
+      upsellCategory: $("sUpsell").value.trim() || "Bebidas",
       uberFee: Math.min(60, Math.max(0, Number($("sUberFee").value) || 0)),
       didiFee: Math.min(60, Math.max(0, Number($("sDidiFee").value) || 0)),
       bank: $("sBank").value.trim(),

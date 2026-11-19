@@ -118,14 +118,14 @@ export function summarize(itemLists) {
   return [...map.values()].sort((a, b) => a.name.localeCompare(b.name, "es"));
 }
 
-export function summaryHtml(itemLists, currency = "$", title = "Resumen de lo que pidieron") {
+export function summaryHtml(itemLists, currency = "$", title = "Resumen de lo que pidieron", discount = 0) {
   const rows = summarize(itemLists);
   if (!rows.length) return "";
-  const total = rows.reduce((s, r) => s + r.qty * r.price, 0);
+  const total = rows.reduce((s, r) => s + r.qty * r.price, 0) - (Number(discount) || 0);
   const pieces = rows.reduce((s, r) => s + r.qty, 0);
   return `<div class="summary"><div class="label">${esc(title)}</div>
     <table><tbody>${rows.map((r) => `<tr><td class="mono q">${r.qty} ×</td><td>${esc(r.name)}</td><td class="mono r">${money(r.qty * r.price, currency)}</td></tr>`).join("")}</tbody>
-    <tfoot><tr><td class="mono q">${pieces}</td><td>${pieces === 1 ? "pieza" : "piezas"} en total</td><td class="mono r">${money(total, currency)}</td></tr></tfoot></table></div>`;
+    <tfoot>${discount ? `<tr><td></td><td>Descuentos (promoción)</td><td class="mono r">−${money(discount, currency)}</td></tr>` : ""}<tr><td class="mono q">${pieces}</td><td>${pieces === 1 ? "pieza" : "piezas"} en total</td><td class="mono r">${money(total, currency)}</td></tr></tfoot></table></div>`;
 }
 
 // Nombre de una mesa para mostrar: "Mesa 3" o "Barra"
