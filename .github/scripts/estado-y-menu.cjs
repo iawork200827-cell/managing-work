@@ -50,6 +50,9 @@ const db = admin.firestore();
 
   const products = await db.collection("products").get();
   console.log(`Productos: ${products.size}`);
+  const blocked = products.docs.filter((p) => p.data().available === false).map((p) => p.data().name);
+  console.log("Productos bloqueados a mano: " + (blocked.length ? blocked.join(", ") : "ninguno"));
+  console.log("Carnes marcadas como agotadas: " + JSON.stringify((cfg.exists && cfg.data().outOptions) || []));
   const orders = await db.collection("orders").count().get();
   const tables = await db.collection("tables").count().get();
   console.log(`Pedidos guardados: ${orders.data().count} · Mesas con cuenta: ${tables.data().count}`);
