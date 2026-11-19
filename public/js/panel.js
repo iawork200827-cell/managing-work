@@ -65,11 +65,7 @@ function listen() {
     state.tables = s.docs.map((d) => ({ id: d.id, ...d.data() }));
     render();
   }, onErr));
-  // Sesión secreta de cada mesa (para juntar sus rondas) y claves de los QR
-  state.unsubs.push(onSnapshot(collection(db, "tableSecrets"), (s) => {
-    state.secrets = Object.fromEntries(s.docs.map((d) => [d.id, d.data().session]));
-    render();
-  }, onErr));
+  // Claves de los QR de las mesas
   state.unsubs.push(onSnapshot(collection(db, "tableKeys"), (s) => {
     state.keys = Object.fromEntries(s.docs.map((d) => [d.id, d.data().key]));
     state.keysLoaded = true;
@@ -124,7 +120,7 @@ function render() {
 
   const pend = [...state.active.values()].filter((o) => o.status === "pendiente" || o.status === "por_pagar").length;
   const bills = Object.values(state.tabsOpen).filter((t) => t.billRequested).length;
-  const openTables = state.tables.filter((t) => t.status === "abierta").length;
+  const openTables = Object.keys(state.tabsOpen).length;
   const tabs = [
     ["pedidos", `Pedidos${pend ? ` (${pend})` : ""}`],
     ["mesas", `Mesas${openTables ? ` (${openTables})` : ""}${bills ? " · cuenta" : ""}`],
@@ -258,28 +254,31 @@ function ordersHtml() {
   return html;
 }
 
-const sessionOf = (t) => state.secrets[t.id];
-const tabOf = (t) => state.tabsOpen[sessionOf(t)] || {};
-function roundsOf(t) {
-  const session = sessionOf(t);
-  return allOrders().filter((o) => o.type === "mesa" && session && o.session === session && o.status !== "cancelado").sort((a, b) => a.createdAt - b.createdAt);
+// Cuentas abiertas: puede haber varias en la misma mesa
+function openTabs() {
+  return Object.values(state.tabsOpen).sort((a, b) =>
+    (b.billRequested ? 1 : 0) - (a.billRequested ? 1 : 0) || Number(a.table) - Number(b.table) || toMillis(a.openedAt) - toMillis(b.openedAt));
+}
+function roundsOfTab(tab) {
+  return allOrders().filter((o) => o.type === "mesa" && o.session === tab.id && o.status !== "cancelado").sort((a, b) => a.createdAt - b.createdAt);
 }
 
 function tablesHtml() {
-  const open = state.tables.filter((t) => t.status === "abierta").sort((a, b) => (tabOf(b).billRequested ? 1 : 0) - (tabOf(a).billRequested ? 1 : 0) || Number(a.id) - Number(b.id));
-  if (!open.length) return `<div class="empty">No hay mesas con cuenta abierta. Cuando un cliente pida desde el QR de su mesa, aparecerá aquí.</div>`;
+  const tabs = openTabs();
+  if (!tabs.length) return `<div class="empty">No hay cuentas abiertas. Cuando un cliente pida desde el QR de su mesa, aparecerá aquí.</div>`;
+  const perTable = {};
+  tabs.forEach((t) => (perTable[t.table] = (perTable[t.table] || 0) + 1));
   let html = '<div class="board">';
-  for (const t of open) {
-    const rounds = roundsOf(t);
+  for (const tab of tabs) {
+    const rounds = roundsOfTab(tab);
     const total = rounds.reduce((s, r) => s + (Number(r.total) || 0), 0);
     const pending = rounds.filter((r) => r.status !== "entregado").length;
-    const tab = tabOf(t);
-    html += `<div class="order"><div class="row"><h3>Mesa ${esc(t.id)}</h3>${tab.billRequested ? '<span class="tag bill">Pidió la cuenta</span>' : ""}${tab.code ? `<span class="muted mono">código ${esc(tab.code)}</span>` : ""}</div>
-      <div class="row"><span class="muted">Abierta ${t.openedAt ? fmtTime(toMillis(t.openedAt)) : ""} · ${rounds.length} ${rounds.length === 1 ? "ronda" : "rondas"}${pending ? ` · ${pending} en cocina` : ""}</span><span class="price">${money(total, cur())}</span></div>
+    html += `<div class="order"><div class="row"><h3>Mesa ${esc(tab.table)}${perTable[tab.table] > 1 ? ` <span class="tag">${perTable[tab.table]} cuentas</span>` : ""}</h3>${tab.billRequested ? '<span class="tag bill">Pidió la cuenta</span>' : ""}</div>
+      <div class="row"><span class="muted">Cuenta <span class="mono">${esc(tab.code)}</span> · abierta ${tab.openedAt ? fmtTime(toMillis(tab.openedAt)) : ""} · ${rounds.length} ${rounds.length === 1 ? "ronda" : "rondas"}${pending ? ` · ${pending} en cocina` : ""}</span><span class="price">${money(total, cur())}</span></div>
       ${summaryHtml(rounds.map((r) => r.items), cur(), "Resumen de la cuenta")}
       <details><summary class="muted">Ver por ronda</summary>${rounds.map((r, i) => `<div class="round"><div class="row"><strong>Ronda ${i + 1}</strong><span class="muted">${STATUS_LABEL[r.status]}</span><span class="price">${money(r.total, cur())}</span></div>${itemsByPlate(r.items)}</div>`).join("")}</details>
-      <div class="acts"><button class="primary" data-close="${esc(t.id)}" data-method="efectivo">Cobrado en efectivo</button>
-        <button data-close="${esc(t.id)}" data-method="tarjeta">Cobrado con tarjeta</button></div></div>`;
+      <div class="acts"><button class="primary" data-close="${esc(tab.id)}" data-method="efectivo">Cobrado en efectivo</button>
+        <button data-close="${esc(tab.id)}" data-method="tarjeta">Cobrado con tarjeta</button></div></div>`;
   }
   return html + "</div>";
 }
@@ -354,8 +353,7 @@ function qrHtml() {
   return `<div class="no-print" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
       <button class="primary" id="sheetBtn">Descargar códigos (imagen)</button>
       <button id="printBtn">Imprimir</button>
-      <button id="rotateKeys">Cambiar códigos de las mesas</button>
-      <span class="muted">Cada QR de mesa tiene una clave: solo quien lo escanea en la mesa puede abrir la cuenta. Si cambias los códigos, hay que imprimir los nuevos.</span></div>
+      <span class="muted">Estos son los códigos definitivos. Cada QR de mesa tiene una clave: solo quien lo escanea en la mesa puede abrir una cuenta.</span></div>
     <div id="sheetOut" class="no-print"></div>
     <div class="qrgrid">${cards}</div>`;
 }
@@ -397,18 +395,18 @@ function buildSheet() {
 
 // Crea la clave secreta de cada mesa que todavía no tenga
 let ensuring = false;
-async function ensureKeys(force = false) {
+async function ensureKeys() {
   if (ensuring || !state.keysLoaded) return;
   const n = Math.min(200, Math.max(0, Number(state.config.tables) || 0));
   const missing = [];
-  for (let i = 1; i <= n; i++) if (force || !state.keys[String(i)]) missing.push(String(i));
+  // Solo crea claves para mesas que no tengan; las existentes nunca se cambian
+  for (let i = 1; i <= n; i++) if (!state.keys[String(i)]) missing.push(String(i));
   if (!missing.length) return;
   ensuring = true;
   try {
     const b = writeBatch(db);
     missing.forEach((id) => b.set(doc(db, "tableKeys", id), { key: newId(16), createdAt: serverTimestamp() }));
     await b.commit();
-    if (force) toast("Códigos nuevos listos. Imprime los QR otra vez.");
   } catch (e) { console.error(e); toast("No se pudieron crear los códigos de las mesas"); }
   ensuring = false;
 }
@@ -443,26 +441,24 @@ function setStatus(id, status) {
   }, status === "cancelado" ? "Pedido cancelado" : null);
 }
 
-function closeTable(tableId, method) {
-  const t = state.tables.find((x) => x.id === tableId);
-  if (!t) return;
-  const rounds = roundsOf(t);
+function closeTab(tabId, method) {
+  const tab = state.tabsOpen[tabId];
+  if (!tab) return;
+  const rounds = roundsOfTab(tab);
   const total = rounds.reduce((s, r) => s + (Number(r.total) || 0), 0);
   return write(async () => {
     const b = writeBatch(db);
-    const session = sessionOf(t);
-    b.update(doc(db, "tables", tableId), { status: "cerrada", closedAt: serverTimestamp(), total, payMethod: method });
-    if (session) b.set(doc(db, "tabs", session), { closed: true, billRequested: false, total, payMethod: method }, { merge: true });
+    b.set(doc(db, "tabs", tabId), { closed: true, billRequested: false, total, payMethod: method, closedAt: serverTimestamp() }, { merge: true });
     for (const r of rounds) {
       const patch = { paid: true, payMethod: method };
       if (r.status !== "entregado") {
         patch.status = "entregado"; patch.entregadoAt = serverTimestamp(); b.delete(doc(db, "queue", r.id));
-        b.set(doc(db, "tabs", session, "rounds", r.id), { status: "entregado" }, { merge: true });
+        b.set(doc(db, "tabs", tabId, "rounds", r.id), { status: "entregado" }, { merge: true });
       }
       b.update(doc(db, "orders", r.id), patch);
     }
     await b.commit();
-  }, `Mesa ${tableId} cobrada y cerrada`);
+  }, `Mesa ${tab.table} (cuenta ${tab.code}) cobrada y cerrada`);
 }
 
 // Carnes que el cliente puede escoger en tacos, burritos, quesadillas, gringas y tortas.
@@ -485,10 +481,6 @@ document.addEventListener("click", (ev) => {
   const t = ev.target.closest("button"); if (!t) return;
   const d = t.dataset;
   if (d.tab) { state.tab = d.tab; state.resetForms = true; document.title = "Panel del dueño"; if (d.tab === "qr") ensureKeys(); render(); return; }
-  if (t.id === "rotateKeys") {
-    if (!t.dataset.confirm) { t.dataset.confirm = "1"; t.textContent = "Los QR impresos dejarán de servir. ¿Seguro? Toca otra vez"; return; }
-    ensureKeys(true); return;
-  }
   if (t.id === "dayBtn") {
     const closed = isClosed(state.config);
     if (!closed && !t.dataset.confirm) { t.dataset.confirm = "1"; t.textContent = "¿Cerrar por hoy? Toca otra vez"; return; }
@@ -519,7 +511,7 @@ document.addEventListener("click", (ev) => {
   }
   if (d.close) {
     if (!t.dataset.confirm) { t.dataset.confirm = "1"; t.textContent = "¿Confirmas? Toca otra vez"; return; }
-    closeTable(d.close, d.method); return;
+    closeTab(d.close, d.method); return;
   }
   if (d.toggle) {
     const p = state.products.find((x) => x.id === d.toggle);

@@ -44,6 +44,18 @@ const db = admin.firestore();
       console.log(`Mesa ${t.id}: estaba abierta con el sistema anterior, la liberé.`);
     }
   }
+  // Cuentas abiertas con la versión de "una cuenta por mesa": se pasan al formato de varias cuentas
+  const oldSecrets = await db.collection("tableSecrets").get();
+  for (const sdoc of oldSecrets.docs) {
+    const { session, key, openedAt } = sdoc.data();
+    if (!session) continue;
+    const tab = await db.doc("tabs/" + session).get();
+    const already = await db.doc("tabSecrets/" + session).get();
+    if (tab.exists && !tab.data().closed && !already.exists) {
+      await db.doc("tabSecrets/" + session).set({ table: sdoc.id, key: key || "", openedAt: openedAt || admin.firestore.FieldValue.serverTimestamp() });
+      console.log("Mesa " + sdoc.id + ": cuenta abierta convertida al formato de varias cuentas.");
+    }
+  }
   const keys = await db.collection("tableKeys").count().get();
   console.log(`Claves de QR de mesas creadas: ${keys.data().count}`);
 

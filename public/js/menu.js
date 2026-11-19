@@ -46,7 +46,6 @@ const state = {
   // Mesa
   table: tableParam,
   tableKey: tableParam ? (keyParam || local.get("comanda.key." + tableParam) || "") : "",
-  tableDoc: null,   // estado público de la mesa (abierta / cerrada)
   tab: null,        // la cuenta de este celular (si tiene)
   rounds: [],
   joinCode: "",
@@ -180,40 +179,44 @@ function takeoutTicket(o) {
   </div>`;
 }
 
-// ¿Este celular es parte de la cuenta abierta de la mesa?
+// ¿Este celular es parte de una cuenta abierta de la mesa?
 const inTab = () => !!(state.mySession && state.tab && !state.tab.closed);
-// Mesa ocupada por otra cuenta a la que este celular no se ha unido
-const tableTaken = () => !inTab() && state.tableDoc && state.tableDoc.status === "abierta";
 
 function tableHeader() {
   const t = state.tab;
-  // La cuenta anterior de este celular ya se pagó: avisamos, pero puede unirse a la nueva o abrir otra
+  // La cuenta anterior de este celular ya se pagó
   const paidBefore = !!(state.mySession && t && t.closed);
   const paidNote = paidBefore
-    ? `<div class="notice">Tu cuenta anterior de esta mesa ya está pagada. ¡Gracias! ${tableTaken() ? "Si alguien de tu mesa ya abrió otra cuenta, escribe su código abajo." : state.tableKey ? "Si quieren pedir algo más, agréguenlo y se abre una cuenta nueva." : "Para pedir otra vez, escanea el QR de la mesa."}
+    ? `<div class="notice">Tu cuenta anterior de esta mesa ya está pagada. ¡Gracias!
         ${state.rounds.length ? `<details style="margin-top:6px"><summary>Ver lo que pagaron</summary>${summaryHtml(state.rounds.filter((r) => r.status !== "cancelado").map((r) => r.items), cur(), "Cuenta pagada")}</details>` : ""}</div>`
     : "";
-  return paidNote + tableHeaderBody(t);
+  return paidNote + (inTab() ? tabTicket(t) : chooseTab());
 }
 
-function tableHeaderBody(t) {
-  if (tableTaken()) {
-    return `<form class="ticket" id="joinForm"><div class="full"><h2>Esta mesa ya tiene una cuenta abierta</h2>
-      <p class="muted" style="margin:4px 0 8px">Para pedir a la misma cuenta, escribe el <strong>código de mesa</strong> que aparece en el celular de alguien de tu mesa.</p>
+// Este celular todavía no está en una cuenta: unirse a una con código o abrir una nueva
+function chooseTab() {
+  return `<div class="ticket">
+    <form class="full" id="joinForm"><h2>Pedir en la Mesa ${esc(state.table)}</h2>
+      <p class="muted" style="margin:4px 0 8px">¿Alguien de tu mesa ya abrió una cuenta? Escribe su <strong>código de mesa</strong> para pedir en la misma cuenta.</p>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <input id="joinCode" maxlength="6" autocomplete="off" autocapitalize="characters" placeholder="Ej. K7P2QX" style="flex:1 1 140px;width:auto;text-transform:uppercase;font-family:var(--mono)" value="${esc(state.joinCode)}">
-        <button class="primary" type="submit">Unirme</button></div></div></form>`;
-  }
-  if (!inTab() && !state.tableKey) {
-    return `<div class="notice">Para pedir, <strong>escanea el código QR que está en tu mesa</strong>.</div>`;
-  }
-  if (!inTab()) return "";
+        <button class="primary" type="submit">Unirme</button></div>
+    </form>
+    <div class="full" style="border-top:1px solid var(--line);padding-top:12px">
+      ${state.tableKey
+        ? `<p class="muted" style="margin:0 0 8px">¿Es la primera cuenta de la mesa o quieren <strong>pagar aparte</strong>? Abre una cuenta nueva y comparte su código.</p>
+           <button data-newtab>Abrir cuenta nueva</button>`
+        : `<p class="muted" style="margin:0">Para abrir una cuenta nueva, <strong>escanea el código QR que está en tu mesa</strong>.</p>`}
+    </div></div>`;
+}
+
+function tabTicket(t) {
   const rounds = state.rounds.filter((r) => r.status !== "cancelado").sort((a, b) => a.createdAt - b.createdAt);
   const total = rounds.reduce((s, r) => s + (Number(r.total) || 0), 0);
-  let html = `<div class="ticket"><div><div class="label">Mesa ${esc(state.table)}</div><div class="big">${money(total, cur())}</div>
+  let html = `<div class="ticket"><div><div class="label">Mesa ${esc(state.table)} · tu cuenta</div><div class="big">${money(total, cur())}</div>
     <div class="muted">${rounds.length} ${rounds.length === 1 ? "ronda" : "rondas"}</div></div>
-    <div><div class="label">Código de mesa</div><div class="big">${esc(t.code)}</div>
-    <div class="muted">Compártelo con tu mesa para que pidan desde sus celulares.</div></div>`;
+    <div><div class="label">Código de la cuenta</div><div class="big">${esc(t.code)}</div>
+    <div class="muted">Compártelo con quien vaya a pedir en esta misma cuenta.</div></div>`;
   const active = rounds.filter((r) => r.status === "pendiente" || r.status === "preparando");
   if (active.length) {
     const q = etaFor(active[active.length - 1]);
@@ -222,16 +225,42 @@ function tableHeaderBody(t) {
     html += `<div><div class="label">Estado</div><h2>¡Ya va para tu mesa!</h2></div>`;
   }
   if (rounds.length) {
-    html += `<div class="full">${summaryHtml(rounds.map((r) => r.items), cur(), "Resumen de lo que ha pedido la mesa")}</div>`;
+    html += `<div class="full">${summaryHtml(rounds.map((r) => r.items), cur(), "Resumen de lo que han pedido en esta cuenta")}</div>`;
     html += `<div class="full"><details><summary class="muted">Ver por ronda</summary>`;
     rounds.forEach((r, i) => {
       html += `<div class="round"><div class="row"><strong>Ronda ${i + 1}</strong><span class="tag">${STATUS_LABEL[r.status] || r.status}</span><span class="price">${money(r.total, cur())}</span></div>${itemsByPlate(r.items)}</div>`;
     });
-    html += `</details></div><div class="full" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">`;
-    html += t.billRequested ? `<span class="tag">Ya pediste la cuenta. En un momento te atienden.</span>` : `<button data-bill>Pedir la cuenta</button>`;
-    html += `</div>`;
+    html += `</details></div>`;
   }
+  html += `<div class="full" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">`;
+  if (rounds.length) html += t.billRequested ? `<span class="tag">Ya pediste la cuenta. En un momento te atienden.</span>` : `<button data-bill>Pedir la cuenta</button>`;
+  html += `<button data-leavetab>Pedir en una cuenta aparte</button></div>`;
   return html + `</div>`;
+}
+
+function checkoutHtml() {
+  const items = cartItems();
+  const canDeliver = deliveryOn();
+  const delivery = canDeliver ? state.delivery : "recoger";
+  return `<section class="checkout">
+    <button data-back>← Volver al menú</button>
+    <h2 style="margin-top:12px">Tu pedido</h2>
+    ${itemsByPlate(items)}
+    <div class="price">Total: ${money(cartTotal(), cur())}${delivery === "domicilio" ? ' <span class="muted">· envío gratis</span>' : ""}</div>
+    <form id="casaForm" class="form" style="margin-top:14px">
+      <label>Tu nombre<input id="custName" required maxlength="60" autocomplete="name" value="${esc(state.customer)}"></label>
+      <label>Teléfono<input id="custPhone" required type="tel" inputmode="tel" maxlength="20" autocomplete="tel" value="${esc(state.phone)}"></label>
+      <div class="opts" role="radiogroup" aria-label="Entrega" style="grid-column:1/-1">
+        ${canDeliver ? `<button type="button" role="radio" aria-checked="${delivery === "domicilio"}" class="${delivery === "domicilio" ? "on" : ""}" data-delivery="domicilio">A domicilio (gratis)</button>` : ""}
+        <button type="button" role="radio" aria-checked="${delivery === "recoger"}" class="${delivery === "recoger" ? "on" : ""}" data-delivery="recoger">Paso a recoger</button>
+      </div>
+      ${canDeliver ? "" : `<p class="muted" style="grid-column:1/-1;margin:0">Hoy no tenemos servicio a domicilio. Puedes pedir y pasar a recoger.</p>`}
+      ${delivery === "domicilio" ? `<label style="grid-column:1/-1">Dirección completa (calle, número, colonia, referencias)<input id="custAddr" required maxlength="200" autocomplete="street-address" value="${esc(state.address)}"></label>` : ""}
+      <label style="grid-column:1/-1">Nota (opcional)<input id="custNote" maxlength="200" value="${esc(state.note)}" placeholder="Sin cebolla, salsa aparte…"></label>
+      <p class="muted" style="grid-column:1/-1;margin:0">Pagas por transferencia antes de que preparemos tu pedido. Al enviarlo te mostramos los datos.</p>
+      <div style="grid-column:1/-1"><button class="primary" type="submit" id="placeOrder" ${state.sending ? "disabled" : ""}>Enviar pedido</button></div>
+    </form>
+  </section>`;
 }
 
 function tablePicker() {
@@ -323,7 +352,7 @@ function renderCart() {
       <button class="primary" data-checkout>Continuar</button></div>`;
     return;
   }
-  const label = MODE === "mesa" ? "Enviar a cocina" : "Enviar pedido";
+  const label = MODE === "mesa" ? (!inTab() && state.confirmNewTab ? "Abrir cuenta nueva y enviar" : "Enviar a cocina") : "Enviar pedido";
   bar.innerHTML = `<div class="in">
     <span class="sum">${units} ${units === 1 ? "pieza" : "piezas"} · ${money(cartTotal(), cur())}</span>
     ${MODE === "llevar" ? `<input id="custName" placeholder="Tu nombre" autocomplete="given-name" maxlength="60" value="${esc(state.customer)}" aria-label="Tu nombre">` : ""}
@@ -334,28 +363,25 @@ function renderCart() {
   if (active && $(active)) $(active).focus();
 }
 
-// ---------- mesa: abrir o unirse a la cuenta ----------
-async function ensureTableSession() {
-  if (inTab()) return state.mySession;
-  if (tableTaken()) { const e = new Error("taken"); e.code = "taken"; throw e; }
+// ---------- mesa: abrir o unirse a una cuenta ----------
+// Abre una cuenta nueva en la mesa (se necesita la clave del QR). Puede haber varias a la vez.
+async function openNewTab() {
   if (!state.tableKey) { const e = new Error("nokey"); e.code = "nokey"; throw e; }
   const session = newId(24);
   const code = newCode();
   const b = writeBatch(db);
-  b.set(doc(db, "tableSecrets", state.table), { session, key: state.tableKey, openedAt: serverTimestamp() });
-  b.set(doc(db, "tables", state.table), { status: "abierta", openedAt: serverTimestamp() });
+  b.set(doc(db, "tabSecrets", session), { table: state.table, key: state.tableKey, openedAt: serverTimestamp() });
   b.set(doc(db, "tabs", session), { table: state.table, openedAt: serverTimestamp(), code, closed: false, billRequested: false });
   b.set(doc(db, "joins", state.table + "-" + code), { session, table: state.table, createdAt: serverTimestamp() });
-  try {
-    await b.commit();
-  } catch (e) {
-    // Otra persona abrió la mesa al mismo tiempo, o el QR es viejo
-    const t = await getDoc(doc(db, "tables", state.table)).catch(() => null);
-    if (t && t.exists() && t.data().status === "abierta") { const err = new Error("taken"); err.code = "taken"; throw err; }
-    const err = new Error("badkey"); err.code = "badkey"; throw err;
-  }
+  try { await b.commit(); }
+  catch (e) { console.error(e); const err = new Error("badkey"); err.code = closed() ? "closed" : "badkey"; throw err; }
   setSession(session);
   return session;
+}
+
+async function ensureTableSession() {
+  if (inTab()) return state.mySession;
+  return openNewTab();
 }
 
 function setSession(session) {
@@ -374,7 +400,7 @@ async function joinTable(code) {
     if (!t.exists() || t.data().closed) { toast("Esa cuenta ya se cerró."); return; }
     state.joinCode = "";
     setSession(j.data().session);
-    toast("¡Listo! Ya estás en la cuenta de la mesa");
+    toast("¡Listo! Ya estás en la cuenta de tu mesa");
   } catch (e) { console.error(e); toast("No se pudo revisar el código. Intenta otra vez."); }
 }
 
@@ -391,6 +417,15 @@ async function placeOrder() {
     if (delivery === "domicilio" && state.address.trim().length < 5) { toast("Escribe tu dirección completa"); $("custAddr")?.focus(); return; }
   }
 
+  if (MODE === "mesa" && !inTab()) {
+    if (!state.tableKey) { toast("Escanea el QR de tu mesa, o escribe el código de la cuenta de tu mesa para unirte."); return; }
+    if (!state.confirmNewTab) {
+      state.confirmNewTab = true; renderCart();
+      toast("Se abrirá una cuenta nueva solo para ti. Si tu mesa ya tiene cuenta, mejor escribe su código arriba.");
+      return;
+    }
+  }
+  state.confirmNewTab = false;
   state.sending = true; renderCart();
   try {
     const units = items.reduce((s, i) => s + i.qty, 0);
@@ -437,8 +472,7 @@ async function placeOrder() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   } catch (e) {
     console.error(e);
-    const msg = e && e.code === "taken" ? "Esta mesa ya tiene una cuenta abierta. Escribe el código de tu mesa para unirte."
-      : e && e.code === "nokey" ? "Escanea el código QR que está en tu mesa para pedir."
+    const msg = e && e.code === "nokey" ? "Escanea el código QR que está en tu mesa para pedir."
       : e && e.code === "badkey" ? "Este QR ya no es válido. Pide al mesero el QR actual de la mesa."
       : closed() ? "Hoy ya no estamos recibiendo pedidos" : "No se pudo enviar. Revisa tu internet e intenta otra vez.";
     toast(msg);
@@ -504,6 +538,18 @@ document.addEventListener("click", (ev) => {
     return;
   }
   if ("neworder" in d) { watchMyOrder(null); return; }
+  if ("newtab" in d) {
+    openNewTab().then(() => toast("Cuenta nueva abierta. Comparte su código con quien pida contigo."),
+      (e) => toast(e.code === "closed" ? "Hoy ya no estamos recibiendo pedidos" : "No se pudo abrir la cuenta. Escanea otra vez el QR de la mesa."));
+    return;
+  }
+  if ("leavetab" in d) {
+    if (!t.dataset.confirm) { t.dataset.confirm = "1"; t.textContent = "¿Salir de esta cuenta? Toca otra vez"; return; }
+    // Este celular deja de pedir en esta cuenta (la cuenta sigue abierta para los demás)
+    state.mySession = null; local.set("comanda.session." + state.table, null); watchTab(null);
+    toast("Listo. Ahora puedes abrir una cuenta nueva o unirte a otra con su código.");
+    return;
+  }
   if ("bill" in d) {
     updateDoc(doc(db, "tabs", state.mySession), { billRequested: true })
       .then(() => toast("Listo, en un momento te traen la cuenta"), () => toast("No se pudo pedir la cuenta. Avísale al mesero."));
@@ -566,10 +612,6 @@ function start() {
 
   if (MODE !== "mesa" && state.myOrderId) watchMyOrder(state.myOrderId);
   if (MODE === "mesa") {
-    onSnapshot(doc(db, "tables", state.table), safe((s) => {
-      state.tableDoc = s.exists() ? s.data() : null;
-      render();
-    }), onErr);
     if (state.mySession) watchTab(state.mySession);
   }
 }
