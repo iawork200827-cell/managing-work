@@ -24,6 +24,7 @@ const state = {
   // Carrito: lista de platos; cada plato es { productId: cantidad }
   plates: [{}],
   cur: 0,
+  pick: {},
   // Para llevar
   customer: local.get("comanda.name") || "",
   myOrderId: local.get("comanda.myOrder"),
@@ -40,12 +41,31 @@ const closed = () => isClosed(state.config);
 function notice(msg) { const n = $("notice"); n.textContent = msg || ""; n.hidden = !msg; }
 
 // ---------- carrito ----------
+// Cada plato guarda { "productoId" o "productoId::Carne": cantidad }
+const SEP = "::";
+const splitKey = (k) => { const i = k.indexOf(SEP); return i < 0 ? [k, ""] : [k.slice(0, i), k.slice(i + SEP.length)]; };
+const outOptions = () => new Set((state.config.outOptions || []).map((o) => String(o).toLowerCase()));
+function optionsOf(p) {
+  const out = outOptions();
+  return (Array.isArray(p.options) ? p.options : []).filter((o) => o && !out.has(String(o).toLowerCase()));
+}
+function hasOptions(p) { return Array.isArray(p.options) && p.options.length > 0; }
+function validKey(key) {
+  const [id, opt] = splitKey(key);
+  const p = state.products.find((x) => x.id === id);
+  if (!p || p.available === false) return null;
+  if (hasOptions(p) && !optionsOf(p).includes(opt)) return null;
+  return { p, opt };
+}
 function cartItems() {
   const out = [];
   state.plates.forEach((plate, i) => {
-    for (const [id, qty] of Object.entries(plate)) {
-      const p = state.products.find((x) => x.id === id);
-      if (p && p.available !== false && qty > 0) out.push({ id, name: p.name, price: Number(p.price) || 0, qty, plate: i + 1 });
+    for (const [key, qty] of Object.entries(plate)) {
+      const v = validKey(key);
+      if (!v || qty <= 0) continue;
+      const item = { id: v.p.id, name: v.opt ? `${v.p.name} de ${v.opt.toLowerCase()}` : v.p.name, price: Number(v.p.price) || 0, qty, plate: i + 1 };
+      if (v.opt) item.option = v.opt;
+      out.push(item);
     }
   });
   return out;
@@ -54,11 +74,15 @@ const cartUnits = () => cartItems().reduce((s, i) => s + i.qty, 0);
 const cartTotal = () => cartItems().reduce((s, i) => s + i.price * i.qty, 0);
 function cleanCart() {
   for (const plate of state.plates) {
-    for (const id of Object.keys(plate)) {
-      const p = state.products.find((x) => x.id === id);
-      if (!p || p.available === false || plate[id] <= 0) delete plate[id];
-    }
+    for (const key of Object.keys(plate)) if (!validKey(key) || plate[key] <= 0) delete plate[key];
   }
+}
+// Carne elegida en cada producto (por defecto la primera disponible)
+function pickFor(p) {
+  const opts = optionsOf(p);
+  if (!opts.length) return "";
+  if (!opts.includes(state.pick[p.id])) state.pick[p.id] = opts[0];
+  return state.pick[p.id];
 }
 
 // ---------- piezas de la vista ----------
@@ -182,14 +206,24 @@ function render() {
   for (const [cat, items] of Object.entries(groups)) {
     html += `<section class="section"><h2>${esc(cat)}</h2>`;
     for (const p of items) {
-      const n = plate[p.id] || 0;
       const out = p.available === false;
-      html += `<div class="item ${out ? "out" : ""}">
+      const withOpts = hasOptions(p);
+      const opts = optionsOf(p);
+      const noneLeft = withOpts && !opts.length;
+      const opt = pickFor(p);
+      const key = opt ? p.id + SEP + opt : p.id;
+      const n = plate[key] || 0;
+      // Lo que ya lleva este plato de este producto, por carne
+      const chosen = withOpts ? Object.entries(plate).filter(([k, q]) => q > 0 && splitKey(k)[0] === p.id).map(([k, q]) => `${q} ${splitKey(k)[1].toLowerCase()}`) : [];
+      const canAdd = !out && !off && !noneLeft;
+      html += `<div class="item ${out || noneLeft ? "out" : ""}">
         <div><h3>${esc(p.name)}</h3>${p.description ? `<p class="muted">${esc(p.description)}</p>` : ""}
-          <div class="price" style="margin-top:6px">${money(p.price, cur())}</div></div>
-        <div>${out ? '<span class="out-tag">Agotado</span>' : off ? "" :
-          `<div class="qty">${n ? `<button aria-label="Quitar ${esc(p.name)}" data-dec="${esc(p.id)}">−</button><span class="mono">${n}</span>` : ""}
-           <button class="${n ? "" : "primary"}" aria-label="Agregar ${esc(p.name)}" data-inc="${esc(p.id)}">+</button></div>`}</div>
+          <div class="price" style="margin-top:6px">${money(p.price, cur())}</div>
+          ${withOpts && canAdd ? `<div class="opts" role="radiogroup" aria-label="Carne para ${esc(p.name)}">${opts.map((o) => `<button role="radio" aria-checked="${o === opt}" class="${o === opt ? "on" : ""}" data-pick="${esc(p.id)}" data-opt="${esc(o)}">${esc(o)}</button>`).join("")}</div>` : ""}
+          ${chosen.length ? `<div class="muted chosen">En este plato: ${esc(chosen.join(", "))}</div>` : ""}</div>
+        <div>${out || noneLeft ? '<span class="out-tag">Agotado</span>' : off ? "" :
+          `<div class="qty">${n ? `<button aria-label="Quitar ${esc(p.name)}${opt ? " de " + esc(opt) : ""}" data-dec="${esc(key)}">−</button><span class="mono">${n}</span>` : ""}
+           <button class="${n ? "" : "primary"}" aria-label="Agregar ${esc(p.name)}${opt ? " de " + esc(opt) : ""}" data-inc="${esc(key)}">+</button></div>`}</div>
       </div>`;
     }
     html += "</section>";
@@ -307,6 +341,7 @@ document.addEventListener("click", (ev) => {
   const d = t.dataset;
   const plate = state.plates[state.cur];
   if (d.cat) { state.catFilter = d.cat; render(); return; }
+  if (d.pick) { state.pick[d.pick] = d.opt; render(); return; }
   if (d.inc) { plate[d.inc] = (plate[d.inc] || 0) + 1; render(); return; }
   if (d.dec) { plate[d.dec] = (plate[d.dec] || 0) - 1; if (plate[d.dec] <= 0) delete plate[d.dec]; render(); return; }
   if (d.plate) { state.cur = Number(d.plate); render(); return; }
@@ -346,6 +381,7 @@ function start() {
 
   onSnapshot(doc(db, "config", "shop"), (s) => {
     if (s.exists()) state.config = { ...DEFAULT_CONFIG, ...s.data() };
+    cleanCart();
     render();
   }, onErr);
 

@@ -145,3 +145,10 @@ input[type="checkbox"] { width: auto }
 .closed-bar.off { background: var(--bad-soft) }
 .tag.bill { background: var(--bad-soft); color: var(--bad) }
 .late { color: var(--bad); font-weight: 700 }
+
+/* Carnes para escoger */
+.opts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px }
+.opts button { font-size: .8rem; padding: 5px 11px }
+.opts button.on:not(.toggle) { background: var(--ink); color: var(--bg); border-color: var(--ink) }
+.chosen { font-size: .82rem; margin-top: 6px }
+.meatbox { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 14px; margin-bottom: 14px }

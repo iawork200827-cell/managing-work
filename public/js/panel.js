@@ -243,6 +243,7 @@ function productsHtml() {
     <label>Precio<input id="pPrice" type="number" step="0.01" min="0" required value="${e ? esc(e.price) : ""}"></label>
     <label>Categoría<input id="pCat" list="catlist" maxlength="40" placeholder="Tacos, Platillos, Bebidas…" value="${esc(e?.category)}"></label>
     <label>Descripción<input id="pDesc" maxlength="160" value="${esc(e?.description)}"></label>
+    <label>Carnes para escoger (separadas por coma)<input id="pOpts" maxlength="300" placeholder="Pastor, Bistec, Barbacoa…" value="${esc((e?.options || []).join(", "))}"></label>
     <datalist id="catlist">${[...new Set(state.products.map((p) => p.category).filter(Boolean))].map((c) => `<option value="${esc(c)}">`).join("")}</datalist>
     <div style="display:flex;gap:6px;flex-wrap:wrap"><button class="primary" type="submit">${e ? "Guardar cambios" : "Agregar producto"}</button>
       ${e ? '<button type="button" data-canceledit>Cancelar</button>' : ""}</div>
@@ -252,13 +253,18 @@ function productsHtml() {
       <button class="primary" data-sample>Cargar menú de Tacos Josué</button></div>`;
   }
   const out = state.products.filter((p) => p.available === false).length;
+  const allOpts = [...new Set([...MEATS, ...state.products.flatMap((p) => p.options || [])])];
+  const outOpts = new Set((state.config.outOptions || []).map((o) => String(o).toLowerCase()));
+  html += `<div class="meatbox"><h3>Carnes</h3><p class="muted" style="margin:2px 0 8px">Toca una carne para marcarla como agotada en todo el menú.</p>
+    <div class="opts">${allOpts.map((o) => { const off = outOpts.has(o.toLowerCase()); return `<button class="toggle ${off ? "off" : "on"}" data-meat="${esc(o)}" aria-pressed="${off}">${esc(o)}${off ? " · agotada" : ""}</button>`; }).join("")}</div>
+    ${state.products.some((p) => WITH_MEATS.includes(p.name) && !(p.options || []).length) ? `<button style="margin-top:10px" data-addmeats>Agregar carnes a tacos, burritos, quesadillas, gringas y tortas</button>` : ""}</div>`;
   html += `<div class="no-print" style="margin:0 0 10px"><button data-sample data-replace>Reemplazar todo con el menú de Tacos Josué</button></div>`;
   html += `<p class="muted" style="margin:0 0 10px">${state.products.length} productos · ${out} agotados. Toca <strong>Disponible / Agotado</strong> para bloquear un producto al instante.</p><div class="plist">`;
   const sorted = [...state.products].sort((a, b) => (a.category || "").localeCompare(b.category || "") || (a.order ?? 0) - (b.order ?? 0));
   for (const p of sorted) {
     const on = p.available !== false;
     html += `<div class="prow"><div><strong>${esc(p.name)}</strong> <span class="price muted">${money(p.price, cur())}</span>
-        <div class="muted" style="font-size:.82rem">${esc(p.category || "Otros")}</div></div>
+        <div class="muted" style="font-size:.82rem">${esc(p.category || "Otros")}${(p.options || []).length ? " · " + esc(p.options.join(", ")) : ""}</div></div>
       <div class="acts">
         <button class="toggle ${on ? "on" : "off"}" data-toggle="${esc(p.id)}" aria-pressed="${!on}">${on ? "Disponible" : "Agotado"}</button>
         <button data-edit="${esc(p.id)}">Editar</button>
@@ -342,6 +348,10 @@ function closeTable(tableId, method) {
   }, `Mesa ${tableId} cobrada y cerrada`);
 }
 
+// Carnes que el cliente puede escoger en tacos, burritos, quesadillas, gringas y tortas.
+const MEATS = ["Bistec", "Pastor", "Combinado", "Barbacoa", "Alambre", "Chorizo", "Tripa", "Hígado"];
+const WITH_MEATS = ["Tacos", "Burritos", "Quesadilla", "Gringa", "Tortas"];
+
 // Menú de Tacos Josué (tomado de su punto de venta). Se carga con un botón en Productos.
 const SAMPLE = [
   ["Tacos", 17, "Tacos"], ["Taco de arrachera", 18, "Tacos"],
@@ -386,12 +396,28 @@ document.addEventListener("click", (ev) => {
     if (!t.dataset.confirm) { t.dataset.confirm = "1"; t.textContent = "¿Borrar? Toca otra vez"; return; }
     write(() => deleteDoc(doc(db, "products", d.del)), "Producto borrado"); return;
   }
+  if (d.meat) {
+    const name = d.meat.toLowerCase();
+    const cur = (state.config.outOptions || []).filter((o) => String(o).toLowerCase() !== name);
+    const nowOut = cur.length === (state.config.outOptions || []).length;
+    write(() => setDoc(doc(db, "config", "shop"), { ...state.config, outOptions: nowOut ? [...cur, d.meat] : cur }),
+      nowOut ? `${d.meat}: agotada` : `${d.meat}: disponible`);
+    return;
+  }
+  if ("addmeats" in d) {
+    write(async () => {
+      const b = writeBatch(db);
+      state.products.filter((p) => WITH_MEATS.includes(p.name) && !(p.options || []).length).forEach((p) => b.update(doc(db, "products", p.id), { options: MEATS }));
+      await b.commit();
+    }, "Carnes agregadas");
+    return;
+  }
   if ("sample" in d) {
     if ("replace" in d && !t.dataset.confirm) { t.dataset.confirm = "1"; t.textContent = "Se borran los productos actuales. ¿Seguro? Toca otra vez"; return; }
     write(async () => {
       const b = writeBatch(db);
       if ("replace" in d) state.products.forEach((p) => b.delete(doc(db, "products", p.id)));
-      SAMPLE.forEach(([name, price, category], i) => b.set(doc(collection(db, "products")), { name, price, category, description: "", available: true, order: i }));
+      SAMPLE.forEach(([name, price, category], i) => b.set(doc(collection(db, "products")), { name, price, category, description: "", available: true, order: i, ...(WITH_MEATS.includes(name) ? { options: MEATS } : {}) }));
       await b.commit();
     }, "Menú cargado");
     return;
@@ -420,7 +446,8 @@ document.addEventListener("submit", (ev) => {
   if (id === "pform") {
     const body = {
       name: $("pName").value.trim(), price: Math.max(0, Number($("pPrice").value) || 0),
-      category: $("pCat").value.trim() || "Otros", description: $("pDesc").value.trim()
+      category: $("pCat").value.trim() || "Otros", description: $("pDesc").value.trim(),
+      options: [...new Set($("pOpts").value.split(",").map((x) => x.trim()).filter(Boolean))].slice(0, 30)
     };
     if (!body.name) return;
     state.resetForms = true;
