@@ -10,13 +10,14 @@ export const auth = app ? getAuth(app) : null;
 export { OWNER_EMAILS };
 
 export const STATUS_LABEL = {
-  pendiente: "Recibido", preparando: "Preparando", listo: "Listo",
+  por_pagar: "Por pagar", pendiente: "Recibido", preparando: "Preparando", listo: "Listo",
   entregado: "Entregado", cancelado: "Cancelado"
 };
 
 export const DEFAULT_CONFIG = {
   name: "Tacos Josué", currency: "$", tables: 4,
-  minMinutes: 5, maxMinutes: 10, capacity: 1, closedUntil: null
+  minMinutes: 5, maxMinutes: 10, capacity: 1, closedUntil: null,
+  deliveryOn: true, bank: "", holder: "", clabe: ""
 };
 
 // Minutos de preparación de un pedido según su tamaño:

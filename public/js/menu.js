@@ -1,6 +1,7 @@
-// Vista del cliente. Funciona en dos modos según la página:
+// Vista del cliente. Funciona en tres modos según la página:
 //  - mesa.html   → cuenta abierta por mesa, rondas separadas por platos, se paga al final.
-//  - llevar.html → pedido para llevar con nombre, fila y tiempo estimado.
+//  - llevar.html → pedido para llevar en el local, con fila y tiempo estimado; se paga al recoger.
+//  - casa.html   → pedido desde casa (domicilio o recoger); se paga antes por transferencia.
 import {
   collection, doc, onSnapshot, query, where, writeBatch, setDoc, getDoc, updateDoc, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
@@ -9,7 +10,8 @@ import {
   STATUS_LABEL, DEFAULT_CONFIG, prepMinutes, estimate, isClosed, newId
 } from "./common.js";
 
-const MODE = document.body.dataset.mode === "mesa" ? "mesa" : "llevar";
+const MODE = ["mesa", "casa"].includes(document.body.dataset.mode) ? document.body.dataset.mode : "llevar";
+const ORDER_KEY = MODE === "casa" ? "comanda.myOrder.casa" : "comanda.myOrder";
 const params = new URLSearchParams(location.search);
 const tableParam = (params.get("m") || params.get("mesa") || "").replace(/[^0-9A-Za-z]/g, "").slice(0, 10);
 
@@ -25,10 +27,15 @@ const state = {
   plates: [{}],
   cur: 0,
   pick: {},
-  // Para llevar
+  // Para llevar y desde casa
   customer: local.get("comanda.name") || "",
-  myOrderId: local.get("comanda.myOrder"),
+  myOrderId: local.get(ORDER_KEY),
   myOrder: null,
+  phone: local.get("comanda.phone") || "",
+  address: local.get("comanda.address") || "",
+  delivery: local.get("comanda.delivery") || "domicilio",
+  payRef: "",
+  checkout: false,
   // Mesa
   table: tableParam,
   tableDoc: null,
@@ -105,23 +112,56 @@ function etaFor(o) {
   return estimate(state.queue, o.id, o.minutes, state.config);
 }
 
+const deliveryOn = () => state.config.deliveryOn !== false;
+
+function bankHtml(o) {
+  const c = state.config;
+  const row = (label, val, copy) => val ? `<div class="bankrow"><span class="label">${label}</span><span class="mono">${esc(val)}</span>${copy ? `<button data-copy="${esc(val)}">Copiar</button>` : ""}</div>` : "";
+  if (!c.clabe) return `<p>Escríbenos para darte los datos de pago. El pedido entra a cocina cuando confirmemos tu pago.</p>`;
+  return `<div class="bank">
+    ${row("Monto", money(o.total, cur()), false)}
+    ${row("Banco", c.bank, false)}
+    ${row("Titular", c.holder, false)}
+    ${row("CLABE", c.clabe, true)}
+    ${row("Concepto", "Pedido " + o.code, true)}
+  </div>`;
+}
+
+function payStep(o) {
+  if (o.payRef) return `<div class="full"><h2>Estamos confirmando tu pago</h2>
+    <p class="muted" style="margin:4px 0 0">Referencia: ${esc(o.payRef)}. En cuanto lo confirmemos, tu pedido entra a cocina y aquí verás el tiempo estimado.</p></div>`;
+  return `<div class="full"><h2>Paga tu pedido por transferencia</h2>
+    <p class="muted" style="margin:4px 0 8px">Tu pedido entra a cocina cuando confirmemos el pago.</p>
+    ${bankHtml(o)}
+    <form id="payForm" class="payform">
+      <label class="label" for="payRef">Ya transferí: número de referencia o rastreo</label>
+      <input id="payRef" maxlength="60" required value="${esc(state.payRef)}" placeholder="Ej. 0123456 o tu nombre">
+      <button class="primary" type="submit">Avisar que ya pagué</button>
+    </form></div>`;
+}
+
 function takeoutTicket(o) {
   const ready = o.status === "listo";
   const done = o.status === "entregado" || o.status === "cancelado";
+  const toHome = o.type === "casa" && o.delivery === "domicilio";
   const q = etaFor(o);
   let main;
-  if (ready) main = `<div class="full"><h2>¡Tu pedido está listo!</h2><p class="muted" style="margin:4px 0 0">Pasa a recogerlo al mostrador.</p></div>`;
+  if (o.status === "por_pagar") main = payStep(o);
+  else if (ready) main = toHome
+    ? `<div class="full"><h2>¡Tu pedido va en camino!</h2><p class="muted" style="margin:4px 0 0">Llega a: ${esc(o.address)}</p></div>`
+    : `<div class="full"><h2>¡Tu pedido está listo!</h2><p class="muted" style="margin:4px 0 0">Pasa a recogerlo al mostrador.</p></div>`;
   else if (o.status === "cancelado") main = `<div class="full"><h2>Tu pedido fue cancelado.</h2><p class="muted" style="margin:4px 0 0">Pregunta en el mostrador si tienes dudas.</p></div>`;
   else if (o.status === "entregado") main = `<div class="full"><h2>Pedido entregado. ¡Buen provecho!</h2></div>`;
   else main = `<div><div class="label">Pedidos delante de ti</div><div class="big">${q.ahead}</div></div>
-      <div><div class="label">Tiempo estimado</div><div class="big">~${q.minutes} min</div></div>`;
+      <div><div class="label">${toHome ? "Sale a domicilio en" : "Tiempo estimado"}</div><div class="big">~${q.minutes} min</div></div>`;
+  const payNote = o.paid ? "Pagado" : o.type === "casa" ? "Pago por transferencia" : "Pagas al recoger";
   return `<div class="ticket ${ready ? "ready" : ""}" aria-live="polite">
     <div><div class="label">Tu pedido</div><div class="big">#${esc(o.code)}</div><div class="muted">${esc(o.customer)}</div></div>
     ${main}
-    <div class="full">${statusSteps(o.status)}</div>
+    ${o.status === "por_pagar" ? "" : `<div class="full">${statusSteps(o.status)}</div>`}
     <div class="full"><details><summary class="muted">Ver mi pedido</summary>${itemsByPlate(o.items)}
       <div class="price">Total: ${money(o.total, cur())}</div>
-      <div class="muted">${o.paid ? "Pagado" : "Pagas al recoger"}</div></details></div>
+      <div class="muted">${payNote}${o.type === "casa" ? (o.delivery === "domicilio" ? " · A domicilio" : " · Pasas a recoger") : ""}</div></details></div>
     ${done ? `<div class="full"><button data-neworder>Hacer otro pedido</button></div>` : ""}
   </div>`;
 }
@@ -157,6 +197,31 @@ function tableHeader() {
   return html;
 }
 
+function checkoutHtml() {
+  const items = cartItems();
+  const canDeliver = deliveryOn();
+  const delivery = canDeliver ? state.delivery : "recoger";
+  return `<section class="checkout">
+    <button data-back>← Volver al menú</button>
+    <h2 style="margin-top:12px">Tu pedido</h2>
+    ${itemsByPlate(items)}
+    <div class="price">Total: ${money(cartTotal(), cur())}${delivery === "domicilio" ? ' <span class="muted">· envío gratis</span>' : ""}</div>
+    <form id="casaForm" class="form" style="margin-top:14px">
+      <label>Tu nombre<input id="custName" required maxlength="60" autocomplete="name" value="${esc(state.customer)}"></label>
+      <label>Teléfono<input id="custPhone" required type="tel" inputmode="tel" maxlength="20" autocomplete="tel" value="${esc(state.phone)}"></label>
+      <div class="opts" role="radiogroup" aria-label="Entrega" style="grid-column:1/-1">
+        ${canDeliver ? `<button type="button" role="radio" aria-checked="${delivery === "domicilio"}" class="${delivery === "domicilio" ? "on" : ""}" data-delivery="domicilio">A domicilio (gratis)</button>` : ""}
+        <button type="button" role="radio" aria-checked="${delivery === "recoger"}" class="${delivery === "recoger" ? "on" : ""}" data-delivery="recoger">Paso a recoger</button>
+      </div>
+      ${canDeliver ? "" : `<p class="muted" style="grid-column:1/-1;margin:0">Hoy no tenemos servicio a domicilio. Puedes pedir y pasar a recoger.</p>`}
+      ${delivery === "domicilio" ? `<label style="grid-column:1/-1">Dirección completa (calle, número, colonia, referencias)<input id="custAddr" required maxlength="200" autocomplete="street-address" value="${esc(state.address)}"></label>` : ""}
+      <label style="grid-column:1/-1">Nota (opcional)<input id="custNote" maxlength="200" value="${esc(state.note)}" placeholder="Sin cebolla, salsa aparte…"></label>
+      <p class="muted" style="grid-column:1/-1;margin:0">Pagas por transferencia antes de que preparemos tu pedido. Al enviarlo te mostramos los datos.</p>
+      <div style="grid-column:1/-1"><button class="primary" type="submit" id="placeOrder" ${state.sending ? "disabled" : ""}>Enviar pedido</button></div>
+    </form>
+  </section>`;
+}
+
 function tablePicker() {
   return `<form class="login" id="tableForm"><h2>¿En qué mesa estás?</h2>
     <label class="label" for="tableNum">Número de mesa</label>
@@ -169,15 +234,17 @@ function tablePicker() {
 function render() {
   const name = state.config.name || "Menú";
   $("shopName").textContent = name;
-  document.title = name + (MODE === "mesa" ? " · Mesa" : " · Para llevar");
-  $("eyebrow").textContent = MODE === "mesa" ? (state.table ? `Mesa ${state.table} · ordena desde tu celular` : "Pedido en mesa") : "Pedido para llevar";
+  document.title = name + ({ mesa: " · Mesa", llevar: " · Para llevar", casa: " · Pedir desde casa" })[MODE];
+  $("eyebrow").textContent = MODE === "mesa" ? (state.table ? `Mesa ${state.table} · ordena desde tu celular` : "Pedido en mesa")
+    : MODE === "casa" ? (deliveryOn() ? "Pide desde casa · domicilio gratis o recoger" : "Pide desde casa · pasa a recoger") : "Pedido para llevar";
   const app = $("app");
   if (!configured) { app.innerHTML = notConfiguredHtml(); return; }
   if (MODE === "mesa" && !state.table) { app.innerHTML = tablePicker(); $("cartbar").hidden = true; return; }
 
   let html = "";
   if (closed()) html += `<div class="notice"><strong>Hoy ya no estamos recibiendo pedidos.</strong> ¡Te esperamos mañana!</div>`;
-  if (MODE === "llevar" && state.myOrder) html += takeoutTicket(state.myOrder);
+  if (MODE !== "mesa" && state.myOrder) html += takeoutTicket(state.myOrder);
+  if (MODE === "casa" && state.checkout && cartUnits() && !closed()) { app.innerHTML = html + checkoutHtml(); $("cartbar").hidden = true; return; }
   if (MODE === "mesa") html += tableHeader();
 
   if (!state.loaded) { app.innerHTML = html + '<p class="muted">Cargando el menú…</p>'; renderCart(); return; }
@@ -238,6 +305,12 @@ function renderCart() {
   if (!units || closed()) { bar.hidden = true; return; }
   const active = document.activeElement && document.activeElement.id;
   bar.hidden = false;
+  if (MODE === "casa") {
+    if (state.checkout) { bar.hidden = true; return; }
+    bar.innerHTML = `<div class="in"><span class="sum">${units} ${units === 1 ? "pieza" : "piezas"} · ${money(cartTotal(), cur())}</span>
+      <button class="primary" data-checkout>Continuar</button></div>`;
+    return;
+  }
   const label = MODE === "mesa" ? "Enviar a cocina" : "Enviar pedido";
   bar.innerHTML = `<div class="in">
     <span class="sum">${units} ${units === 1 ? "pieza" : "piezas"} · ${money(cartTotal(), cur())}</span>
@@ -272,7 +345,12 @@ async function placeOrder() {
   const items = cartItems();
   if (!items.length) { toast("Los productos que elegiste se agotaron"); cleanCart(); render(); return; }
   const name = state.customer.trim();
-  if (MODE === "llevar" && !name) { toast("Escribe tu nombre para poder llamarte"); $("custName")?.focus(); return; }
+  if (MODE !== "mesa" && !name) { toast("Escribe tu nombre para poder llamarte"); $("custName")?.focus(); return; }
+  const delivery = MODE === "casa" ? (deliveryOn() ? state.delivery : "recoger") : null;
+  if (MODE === "casa") {
+    if (state.phone.replace(/\D/g, "").length < 7) { toast("Escribe tu teléfono"); $("custPhone")?.focus(); return; }
+    if (delivery === "domicilio" && state.address.trim().length < 5) { toast("Escribe tu dirección completa"); $("custAddr")?.focus(); return; }
+  }
 
   state.sending = true; renderCart();
   try {
@@ -280,14 +358,19 @@ async function placeOrder() {
     const ref = doc(collection(db, "orders"));
     const minutes = prepMinutes(units, state.config);
     const order = {
-      type: MODE, items, minutes, status: "pendiente", paid: false, createdAt: serverTimestamp(),
+      type: MODE, items, minutes, status: MODE === "casa" ? "por_pagar" : "pendiente", paid: false, createdAt: serverTimestamp(),
       code: ref.id.replace(/[^a-zA-Z0-9]/g, "").slice(-4).toUpperCase(),
       total: Math.round(items.reduce((s, i) => s + i.price * i.qty, 0) * 100) / 100
     };
     const plates = new Set(items.map((i) => i.plate)).size;
     if (plates > 1) order.plates = plates;
     if (state.note.trim()) order.note = state.note.trim().slice(0, 200);
-    if (MODE === "llevar") order.customer = name.slice(0, 60);
+    if (MODE !== "mesa") order.customer = name.slice(0, 60);
+    if (MODE === "casa") {
+      order.phone = state.phone.trim().slice(0, 20);
+      order.delivery = delivery;
+      if (delivery === "domicilio") order.address = state.address.trim().slice(0, 200);
+    }
     if (MODE === "mesa") {
       order.table = state.table;
       order.session = await ensureTableSession();
@@ -295,11 +378,17 @@ async function placeOrder() {
     }
     const batch = writeBatch(db);
     batch.set(ref, order);
-    batch.set(doc(db, "queue", ref.id), { status: "pendiente", createdAt: serverTimestamp(), minutes });
+    // Los pedidos desde casa entran a la fila hasta que se confirma el pago
+    if (MODE !== "casa") batch.set(doc(db, "queue", ref.id), { status: "pendiente", createdAt: serverTimestamp(), minutes });
     await batch.commit();
 
-    state.plates = [{}]; state.cur = 0; state.note = "";
-    if (MODE === "llevar") { local.set("comanda.name", name); watchMyOrder(ref.id); toast("¡Pedido enviado!"); }
+    state.plates = [{}]; state.cur = 0; state.note = ""; state.checkout = false;
+    if (MODE === "casa") {
+      local.set("comanda.phone", state.phone.trim());
+      local.set("comanda.delivery", delivery);
+      if (delivery === "domicilio") local.set("comanda.address", state.address.trim());
+    }
+    if (MODE !== "mesa") { local.set("comanda.name", name); watchMyOrder(ref.id); toast(MODE === "casa" ? "Pedido recibido. Ahora paga para que lo preparemos." : "¡Pedido enviado!"); }
     else toast("¡Ronda enviada a cocina!");
     window.scrollTo({ top: 0, behavior: "smooth" });
   } catch (e) {
@@ -314,11 +403,11 @@ async function placeOrder() {
 let unsubOrder = null;
 function watchMyOrder(id) {
   if (unsubOrder) unsubOrder();
-  state.myOrderId = id; local.set("comanda.myOrder", id);
+  state.myOrderId = id; local.set(ORDER_KEY, id);
   if (!id) { state.myOrder = null; render(); return; }
   unsubOrder = onSnapshot(doc(db, "orders", id), (s) => {
     state.myOrder = s.exists() ? { id: s.id, ...s.data() } : null;
-    if (!s.exists()) local.set("comanda.myOrder", null);
+    if (!s.exists()) local.set(ORDER_KEY, null);
     render();
   }, () => { state.myOrder = null; render(); });
 }
@@ -351,7 +440,15 @@ document.addEventListener("click", (ev) => {
     if (!lastEmpty) state.plates.push({});
     state.cur = state.plates.length - 1; render(); return;
   }
-  if (t.id === "placeOrder") { placeOrder(); return; }
+  if (t.id === "placeOrder" && MODE !== "casa") { placeOrder(); return; }
+  if ("checkout" in d) { state.checkout = true; window.scrollTo({ top: 0 }); render(); return; }
+  if ("back" in d) { state.checkout = false; render(); return; }
+  if (d.delivery) { state.delivery = d.delivery; render(); return; }
+  if (d.copy) {
+    const v = d.copy;
+    Promise.resolve().then(() => navigator.clipboard.writeText(v)).then(() => toast("Copiado"), () => toast(v));
+    return;
+  }
   if ("neworder" in d) { watchMyOrder(null); return; }
   if ("bill" in d) {
     updateDoc(doc(db, "tables", state.table), { billRequested: true })
@@ -362,8 +459,20 @@ document.addEventListener("input", (ev) => {
   const id = ev.target.id;
   if (id === "custName") state.customer = ev.target.value;
   if (id === "custNote") state.note = ev.target.value;
+  if (id === "custPhone") state.phone = ev.target.value;
+  if (id === "custAddr") state.address = ev.target.value;
+  if (id === "payRef") state.payRef = ev.target.value;
 });
 document.addEventListener("submit", (ev) => {
+  if (ev.target.id === "casaForm") { ev.preventDefault(); placeOrder(); return; }
+  if (ev.target.id === "payForm") {
+    ev.preventDefault();
+    const ref = state.payRef.trim().slice(0, 60);
+    if (!ref || !state.myOrderId) return;
+    updateDoc(doc(db, "orders", state.myOrderId), { payRef: ref })
+      .then(() => toast("Gracias. Estamos confirmando tu pago."), () => toast("No se pudo enviar. Intenta otra vez."));
+    return;
+  }
   if (ev.target.id !== "tableForm") return;
   ev.preventDefault();
   const v = $("tableNum").value.replace(/[^0-9A-Za-z]/g, "").slice(0, 10);
@@ -397,7 +506,7 @@ function start() {
     render();
   }, onErr);
 
-  if (MODE === "llevar" && state.myOrderId) watchMyOrder(state.myOrderId);
+  if (MODE !== "mesa" && state.myOrderId) watchMyOrder(state.myOrderId);
   if (MODE === "mesa") {
     onSnapshot(doc(db, "tables", state.table), (s) => {
       state.tableDoc = s.exists() ? s.data() : null;

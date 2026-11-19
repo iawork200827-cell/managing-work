@@ -2,7 +2,7 @@ rules_version = '2';
 
 // Reglas de seguridad de la base de datos.
 // - Clientes (sin cuenta): ven el menú, abren la cuenta de su mesa, envían pedidos
-//   y ven el estado de su pedido / de su mesa.
+//   (mesa, para llevar o desde casa) y ven el estado de su pedido / de su mesa.
 // - Dueño (correo y contraseña): cambia productos, ajustes, estados, cobra y cierra mesas.
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -31,9 +31,8 @@ service cloud.firestore {
 
     function validOrder() {
       let d = request.resource.data;
-      return d.keys().hasOnly(['type', 'customer', 'table', 'session', 'note', 'items', 'plates',
-                               'total', 'minutes', 'status', 'createdAt', 'code', 'paid'])
-        && d.status == 'pendiente'
+      return d.keys().hasOnly(['type', 'customer', 'phone', 'delivery', 'address', 'table', 'session', 'note',
+                               'items', 'plates', 'total', 'minutes', 'status', 'createdAt', 'code', 'paid'])
         && d.paid == false
         && d.createdAt == request.time
         && validItems(d.items)
@@ -44,16 +43,26 @@ service cloud.firestore {
         && (!('plates' in d) || (d.plates is number && d.plates >= 1 && d.plates <= 20))
         && shopOpen()
         && (
-          // Pedido para llevar
-          (d.type == 'llevar'
+          // Para llevar en el local: entra directo a cocina y se paga al recoger
+          (d.type == 'llevar' && d.status == 'pendiente'
             && d.customer is string && d.customer.size() > 0 && d.customer.size() <= 60)
           ||
           // Ronda de una mesa: la mesa debe tener la cuenta abierta con esa sesión
-          (d.type == 'mesa'
+          (d.type == 'mesa' && d.status == 'pendiente'
             && d.table is string && d.table.size() <= 10
             && d.session is string
             && get(/databases/$(database)/documents/tables/$(d.table)).data.status == 'abierta'
             && get(/databases/$(database)/documents/tables/$(d.table)).data.session == d.session)
+          ||
+          // Pedido desde casa: queda "por pagar" hasta que el dueño confirma la transferencia
+          (d.type == 'casa' && d.status == 'por_pagar'
+            && d.customer is string && d.customer.size() > 0 && d.customer.size() <= 60
+            && d.phone is string && d.phone.size() >= 7 && d.phone.size() <= 20
+            && (d.delivery == 'recoger'
+                || (d.delivery == 'domicilio'
+                    && d.address is string && d.address.size() >= 5 && d.address.size() <= 200
+                    && !(exists(/databases/$(database)/documents/config/shop)
+                         && shop().get('deliveryOn', true) == false))))
         );
     }
 
@@ -75,7 +84,13 @@ service cloud.firestore {
       allow get: if true;
       allow list: if isOwner() || resource.data.type == 'mesa';
       allow create: if validOrder();
-      allow update, delete: if isOwner();
+      allow update: if isOwner()
+        // El cliente de casa avisa que ya transfirió (solo escribe su referencia)
+        || (resource.data.type == 'casa' && resource.data.status == 'por_pagar'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['payRef'])
+            && request.resource.data.payRef is string
+            && request.resource.data.payRef.size() >= 1 && request.resource.data.payRef.size() <= 60);
+      allow delete: if isOwner();
     }
 
     // Fila pública: solo hora, estado y minutos estimados. Sin nombres ni productos.
@@ -86,7 +101,8 @@ service cloud.firestore {
         && request.resource.data.createdAt == request.time
         && request.resource.data.minutes is number
         && request.resource.data.minutes >= 1 && request.resource.data.minutes <= 60
-        && existsAfter(/databases/$(database)/documents/orders/$(id));
+        // Solo pedidos que ya van a cocina (los de casa, hasta que se confirma el pago)
+        && getAfter(/databases/$(database)/documents/orders/$(id)).data.status == 'pendiente';
       allow update, delete: if isOwner();
     }
 

@@ -15,7 +15,7 @@ import {
 const state = {
   user: null, tab: "pedidos", config: { ...DEFAULT_CONFIG }, products: [], tables: [],
   active: new Map(), today: new Map(), editId: null, resetForms: false,
-  seen: null, fresh: new Set(), soundOn: false, unsubs: []
+  seen: null, seenRefs: new Set(), fresh: new Set(), soundOn: false, unsubs: []
 };
 const cur = () => state.config.currency || "$";
 const isOwner = (u) => !!u && OWNER_EMAILS.map((e) => e.toLowerCase()).includes(String(u.email || "").toLowerCase());
@@ -68,19 +68,20 @@ function listen() {
     if (state.seen && asked.length) { toast(`Mesa ${asked[0].id} pidió la cuenta`); beep(); }
     render();
   }, onErr));
-  state.unsubs.push(onSnapshot(query(collection(db, "orders"), where("status", "in", ["pendiente", "preparando", "listo"])), (s) => {
+  state.unsubs.push(onSnapshot(query(collection(db, "orders"), where("status", "in", ["por_pagar", "pendiente", "preparando", "listo"])), (s) => {
     state.active = new Map(s.docs.map((d) => [d.id, toOrder(d)]));
-    const ids = new Set([...state.active.values()].filter((o) => o.status === "pendiente").map((o) => o.id));
+    const ids = new Set([...state.active.values()].filter((o) => o.status === "pendiente" || o.status === "por_pagar").map((o) => o.id));
+    const paidRefs = new Set([...state.active.values()].filter((o) => o.status === "por_pagar" && o.payRef).map((o) => o.id));
     if (state.seen) {
       const nuevos = [...ids].filter((id) => !state.seen.has(id));
+      const avisos = [...paidRefs].filter((id) => !state.seenRefs.has(id));
       if (nuevos.length) {
         nuevos.forEach((id) => state.fresh.add(id));
         toast(nuevos.length === 1 ? "Nuevo pedido" : `${nuevos.length} pedidos nuevos`);
-        beep();
-        document.title = "(Nuevo) Panel";
-      }
+      } else if (avisos.length) toast("Un cliente avisó que ya transfirió");
+      if (nuevos.length || avisos.length) { beep(); document.title = "(Nuevo) Panel"; }
     }
-    state.seen = ids;
+    state.seen = ids; state.seenRefs = paidRefs;
     render();
   }, onErr));
   state.unsubs.push(onSnapshot(query(collection(db, "orders"), where("createdAt", ">=", Timestamp.fromDate(startOfDay)), orderBy("createdAt", "asc")), (s) => {
@@ -107,7 +108,7 @@ function render() {
   if (!state.resetForms) document.querySelectorAll("#app form input").forEach((i) => { if (i.id && i.type !== "checkbox") keep[i.id] = i.value; });
   state.resetForms = false;
 
-  const pend = [...state.active.values()].filter((o) => o.status === "pendiente").length;
+  const pend = [...state.active.values()].filter((o) => o.status === "pendiente" || o.status === "por_pagar").length;
   const bills = state.tables.filter((t) => t.status === "abierta" && t.billRequested).length;
   const openTables = state.tables.filter((t) => t.status === "abierta").length;
   const tabs = [
@@ -118,7 +119,10 @@ function render() {
   const closed = isClosed(state.config);
   let html = `<div class="closed-bar no-print ${closed ? "off" : ""}">
     <strong>${closed ? "Cerrado por hoy: no se reciben pedidos nuevos" : "Recibiendo pedidos"}</strong>
-    <button id="dayBtn" class="${closed ? "primary" : "danger"}">${closed ? "Abrir pedidos" : "Cerrar pedidos por hoy"}</button>
+    <span style="display:flex;gap:6px;flex-wrap:wrap">
+      <button id="deliveryBtn" class="toggle ${state.config.deliveryOn !== false ? "on" : "off"}">Domicilio: ${state.config.deliveryOn !== false ? "activo" : "apagado"}</button>
+      <button id="dayBtn" class="${closed ? "primary" : "danger"}">${closed ? "Abrir pedidos" : "Cerrar pedidos por hoy"}</button>
+    </span>
   </div>`;
   html += '<div class="tabs">' + tabs.map(([k, l]) => `<button data-tab="${k}" class="${state.tab === k ? "on" : ""}">${l}</button>`).join("") + "</div>";
   if (state.tab === "pedidos") html += ordersHtml();
@@ -155,7 +159,31 @@ function itemsByPlate(items) {
 }
 
 function whoLabel(o) {
-  return o.type === "mesa" ? `<span class="tag">Mesa ${esc(o.table)}</span>` : `<span class="tag">Para llevar</span> <strong>${esc(o.customer)}</strong>`;
+  if (o.type === "mesa") return `<span class="tag">Mesa ${esc(o.table)}</span>`;
+  if (o.type === "casa") return `<span class="tag casa">${o.delivery === "domicilio" ? "Domicilio" : "Casa · recoge"}</span> <strong>${esc(o.customer)}</strong>`;
+  return `<span class="tag">Para llevar</span> <strong>${esc(o.customer)}</strong>`;
+}
+
+function casaInfo(o) {
+  if (o.type !== "casa") return "";
+  return `<div class="muted" style="font-size:.88rem">Tel. <span class="mono">${esc(o.phone)}</span>${o.delivery === "domicilio" ? `<br>${esc(o.address)}` : ""}</div>`;
+}
+
+function payQueueHtml() {
+  const list = allOrders().filter((o) => o.status === "por_pagar").sort((a, b) => a.createdAt - b.createdAt);
+  if (!list.length) return "";
+  let html = `<h3 style="margin:0 0 8px">Por confirmar pago (${list.length})</h3><div class="board" style="margin-bottom:18px">`;
+  for (const o of list) {
+    html += `<div class="order paywait ${o.payRef ? "new" : ""}">
+      <div class="row"><span class="mono" style="font-weight:700">#${esc(o.code)}</span><span class="muted mono">hace ${mins(Date.now() - o.createdAt)} min</span></div>
+      <div class="row"><span>${whoLabel(o)}</span><span class="price">${money(o.total, cur())}</span></div>
+      ${casaInfo(o)}
+      ${itemsByPlate(o.items)}
+      <div class="${o.payRef ? "notice" : "muted"}" style="margin:0">${o.payRef ? `Dice que ya transfirió · ref: <strong>${esc(o.payRef)}</strong>` : "Todavía no avisa que pagó"}</div>
+      <div class="acts"><button class="primary" data-confirmpay="${esc(o.id)}">Pago recibido: enviar a cocina</button>
+        <button class="danger" data-cancel="${esc(o.id)}">Cancelar</button></div></div>`;
+  }
+  return html + "</div>";
 }
 
 // Tiempo real que tardó en estar listo (de recibido a listo)
@@ -163,7 +191,7 @@ const tookMin = (o) => (o.listoAt ? mins(o.listoAt - o.createdAt) : null);
 
 function ordersHtml() {
   const orders = allOrders();
-  const todays = [...state.today.values()].filter((o) => o.status !== "cancelado");
+  const todays = [...state.today.values()].filter((o) => o.status !== "cancelado" && o.status !== "por_pagar");
   const sales = todays.reduce((s, o) => s + (Number(o.total) || 0), 0);
   const inLine = orders.filter((o) => o.status === "pendiente" || o.status === "preparando");
   const took = todays.map(tookMin).filter((m) => m != null);
@@ -175,11 +203,11 @@ function ordersHtml() {
     <div class="stat"><span class="label">Ventas hoy</span><b>${money(sales, cur())}</b></div>
     <div class="stat"><span class="label">Tiempo promedio real</span><b>${avg == null ? "—" : avg + " min"}</b></div>
     <div class="stat"><span class="label">Espera para nuevos</span><b>~${waitNew} min</b></div>
-  </div><div class="board">`;
+  </div>${payQueueHtml()}<div class="board">`;
   const NEXT = {
     pendiente: () => ["preparando", "Empezar a preparar"],
     preparando: () => ["listo", "Marcar listo"],
-    listo: (o) => ["entregado", o.type === "mesa" ? "Servido en mesa" : "Entregado y cobrado"]
+    listo: (o) => ["entregado", o.type === "mesa" ? "Servido en mesa" : o.type === "casa" ? (o.delivery === "domicilio" ? "Entregado en domicilio" : "Entregado") : "Entregado y cobrado"]
   };
   for (const s of ["pendiente", "preparando", "listo"]) {
     const list = orders.filter((o) => o.status === s).sort((a, b) => a.createdAt - b.createdAt);
@@ -193,6 +221,7 @@ function ordersHtml() {
         <div class="row"><span class="mono" style="font-weight:700">#${esc(o.code)}</span>
           <span class="mono ${late ? "late" : "muted"}">${s === "listo" ? `listo en ${tookMin(o) ?? elapsed} min` : `${elapsed} de ~${o.minutes || "?"} min`}</span></div>
         <div class="row"><span>${whoLabel(o)}</span><span class="price">${money(o.total, cur())}</span></div>
+        ${casaInfo(o)}
         ${itemsByPlate(o.items)}
         ${o.note ? `<div class="notice" style="margin:0">Nota: ${esc(o.note)}</div>` : ""}
         <div class="acts"><button class="primary" data-advance="${esc(o.id)}" data-to="${to}">${label}</button>
@@ -283,6 +312,9 @@ function settingsHtml() {
     <label>Minutos por pedido grande<input id="sMaxM" type="number" min="1" max="60" value="${esc(c.maxMinutes)}"></label>
     <label>Pedidos que preparan a la vez<input id="sCap" type="number" min="1" max="10" value="${esc(c.capacity)}"></label>
     <label>Número de mesas<input id="sTables" type="number" min="1" max="200" value="${esc(c.tables)}"></label>
+    <label>Banco (para pedidos desde casa)<input id="sBank" maxlength="40" value="${esc(c.bank)}" placeholder="BBVA, Banorte…"></label>
+    <label>Titular de la cuenta<input id="sHolder" maxlength="60" value="${esc(c.holder)}"></label>
+    <label>CLABE (18 dígitos)<input id="sClabe" maxlength="22" inputmode="numeric" value="${esc(c.clabe)}"></label>
     <div><button class="primary" type="submit">Guardar ajustes</button></div>
   </form>
   <p class="muted">Cada pedido tarda entre el mínimo y el máximo según cuántas piezas lleva (hasta 3 piezas = mínimo; +1 minuto por cada 2 piezas más).
@@ -292,7 +324,8 @@ function settingsHtml() {
 function qrHtml() {
   const base = location.origin;
   const tables = Math.min(200, Math.max(0, Number(state.config.tables) || 0));
-  let cards = `<div class="qrcard"><div class="qr" data-url="${esc(base + "/llevar")}"></div><strong>Para llevar</strong><span>Escanea para pedir</span></div>`;
+  let cards = `<div class="qrcard"><div class="qr" data-url="${esc(base + "/llevar")}"></div><strong>Para llevar</strong><span>Escanea para pedir</span></div>
+    <div class="qrcard"><div class="qr" data-url="${esc(base + "/casa")}"></div><strong>Pide desde casa</strong><span>${esc(base.replace(/^https?:\/\//, "") + "/casa")}</span></div>`;
   for (let i = 1; i <= tables; i++) {
     cards += `<div class="qrcard"><div class="qr" data-url="${esc(base + "/mesa?m=" + i)}"></div><strong>Mesa ${i}</strong><span>Escanea para ordenar</span></div>`;
   }
@@ -376,6 +409,22 @@ document.addEventListener("click", (ev) => {
     return;
   }
   if (d.advance) { setStatus(d.advance, d.to); return; }
+  if (d.confirmpay) {
+    const o = allOrders().find((x) => x.id === d.confirmpay);
+    if (!o) return;
+    write(async () => {
+      const b = writeBatch(db);
+      b.update(doc(db, "orders", o.id), { status: "pendiente", paid: true, payMethod: "transferencia", confirmedAt: serverTimestamp() });
+      b.set(doc(db, "queue", o.id), { status: "pendiente", createdAt: serverTimestamp(), minutes: Number(o.minutes) || 5 });
+      await b.commit();
+    }, `Pedido #${o.code} enviado a cocina`);
+    return;
+  }
+  if (t.id === "deliveryBtn") {
+    const on = state.config.deliveryOn !== false;
+    write(() => setDoc(doc(db, "config", "shop"), { ...state.config, deliveryOn: !on }), on ? "Domicilio apagado" : "Domicilio activo");
+    return;
+  }
   if (d.cancel) {
     if (!t.dataset.confirm) { t.dataset.confirm = "1"; t.textContent = "¿Seguro? Toca otra vez"; return; }
     setStatus(d.cancel, "cancelado"); return;
@@ -464,8 +513,12 @@ document.addEventListener("submit", (ev) => {
       minMinutes: minM,
       maxMinutes: Math.min(60, Math.max(minM, Number($("sMaxM").value) || 10)),
       capacity: Math.min(10, Math.max(1, Number($("sCap").value) || 1)),
-      tables: Math.min(200, Math.max(1, Number($("sTables").value) || 1))
+      tables: Math.min(200, Math.max(1, Number($("sTables").value) || 1)),
+      bank: $("sBank").value.trim(),
+      holder: $("sHolder").value.trim(),
+      clabe: $("sClabe").value.replace(/\s/g, "")
     };
+    if (body.clabe && !/^\d{18}$/.test(body.clabe)) { toast("La CLABE debe tener 18 dígitos"); return; }
     write(() => setDoc(doc(db, "config", "shop"), body), "Ajustes guardados");
   }
 });
