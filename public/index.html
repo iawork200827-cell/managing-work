@@ -3,44 +3,75 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Tacos Josué · Taquería</title>
+  <meta name="description" content="Tacos Josué: tacos de pastor, bistec, arrachera, barbacoa y más. Pide a domicilio, para llevar o desde tu mesa.">
+  <meta property="og:type" content="restaurant">
+  <meta property="og:title" content="Tacos Josué">
+  <meta property="og:description" content="Pide tus tacos a domicilio, para llevar o desde tu mesa.">
+  <meta name="theme-color" content="#1d6b52">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;700&display=swap">
   <link rel="stylesheet" href="css/styles.css">
-  <title>Tacos Josué</title>
-  <meta name="description" content="Pide desde tu mesa, para llevar o desde casa.">
+  <link rel="stylesheet" href="css/site.css">
+  <script type="application/ld+json">
+  { "@context": "https://schema.org", "@type": "Restaurant", "name": "Tacos Josué", "servesCuisine": ["Mexicana", "Tacos"],
+    "acceptsReservations": "False", "url": "https://tacos-josue.web.app/", "hasMenu": "https://tacos-josue.web.app/#menu" }
+  </script>
 </head>
 <body>
-  <div class="wrap">
-    <header class="top">
-      <div class="brand">
-        <span class="label">Bienvenido</span>
-        <h1 id="shopName">Tacos Josué</h1>
+  <header class="hero">
+    <div class="hero-in">
+      <span class="label hero-eyebrow" id="openNow">Taquería</span>
+      <h1 id="shopName">Tacos Josué</h1>
+      <p class="hero-tag" id="tagline">Tacos al pastor, bistec, arrachera y más. Hechos al momento.</p>
+      <div class="hero-cta">
+        <a class="btn-main" href="/casa">Pedir a domicilio</a>
+        <a class="btn-alt" href="/llevar">Para llevar</a>
+        <a class="btn-alt" href="#menu">Ver menú</a>
       </div>
-    </header>
-    <main class="choices">
-      <a class="choice" href="/mesa">
-        <span class="label">Estoy en el local</span>
-        <strong>Pedir en mi mesa</strong>
-        <span class="muted">Pide por rondas y platos. Pagas al final.</span>
-      </a>
-      <a class="choice" href="/llevar">
-        <span class="label">Estoy en el local</span>
-        <strong>Pedir para llevar</strong>
-        <span class="muted">Te avisamos cuando esté listo. Pagas al recoger.</span>
-      </a>
-      <a class="choice" href="/casa">
-        <span class="label">Desde casa</span>
-        <strong>Pedir a domicilio</strong>
-        <span class="muted">Envío gratis o pasa a recoger. Pagas antes por transferencia.</span>
-      </a>
-    </main>
-  </div>
-  <script type="module">
-    import { db, configured } from "./js/common.js";
-    import { doc, getDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-    if (configured) getDoc(doc(db, "config", "shop")).then((s) => {
-      if (s.exists() && s.data().name) { document.getElementById("shopName").textContent = s.data().name; document.title = s.data().name; }
-    }).catch(() => {});
-  </script>
+      <p class="hero-note" id="hoursLine"></p>
+    </div>
+  </header>
+
+  <main class="site">
+    <div id="promoBand" class="promo-band" hidden></div>
+
+    <section id="menu" class="block">
+      <div class="block-head"><h2>Menú</h2><span class="muted" id="menuNote">Precios en pesos</span></div>
+      <div id="menuCats" class="cats"></div>
+      <div id="menuList"><p class="muted">Cargando el menú…</p></div>
+    </section>
+
+    <section class="block how">
+      <h2>¿Cómo quieres pedir?</h2>
+      <div class="choices">
+        <a class="choice" href="/casa"><span class="label">Desde casa</span><strong>A domicilio</strong><span class="muted" id="howCasa">Te lo llevamos o pasas a recoger. Pagas antes por transferencia.</span></a>
+        <a class="choice" href="/llevar"><span class="label">En el local</span><strong>Para llevar</strong><span class="muted">Pide, te avisamos cuando esté listo y pagas al recoger.</span></a>
+        <div class="choice"><span class="label">En el local</span><strong>En tu mesa</strong><span class="muted">Escanea el código QR de tu mesa, pide por rondas y paga al final.</span></div>
+      </div>
+    </section>
+
+    <section class="block info">
+      <div>
+        <h2>Visítanos</h2>
+        <p id="address" class="muted">Dirección por confirmar.</p>
+        <div id="hoursTable" class="hours-table"></div>
+        <div class="hero-cta" style="margin-top:12px"><a id="mapsBtn" class="btn-alt dark" href="#" target="_blank" rel="noopener" hidden>Cómo llegar</a></div>
+      </div>
+      <div>
+        <h2>Contacto</h2>
+        <div id="contact" class="contact"></div>
+        <div id="social" class="social"></div>
+      </div>
+    </section>
+    <div id="mapBox" class="map" hidden></div>
+
+    <section id="about" class="block" hidden><h2>Nosotros</h2><p id="aboutText"></p></section>
+  </main>
+
+  <footer class="site-foot">
+    <span id="footName">Tacos Josué</span> · <a href="/casa">Pedir a domicilio</a> · <a href="/llevar">Para llevar</a>
+  </footer>
+  <script type="module" src="js/site.js"></script>
 </body>
 </html>

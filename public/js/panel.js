@@ -397,6 +397,15 @@ function settingsHtml() {
     <label class="check"><input id="sLoyOn" type="checkbox" ${c.loyalty && c.loyalty.on ? "checked" : ""}> Programa de lealtad (por teléfono)</label>
     <label>Visitas para el premio<input id="sLoyEvery" type="number" min="2" max="50" value="${esc((c.loyalty && c.loyalty.every) || 10)}"></label>
     <label>Premio<input id="sLoyReward" maxlength="80" value="${esc((c.loyalty && c.loyalty.reward) || "Una orden de tacos gratis")}"></label>
+    <fieldset style="grid-column:1/-1;border:1px solid var(--line);border-radius:10px;padding:10px"><legend class="label">Página web (tacos-josue.web.app)</legend>
+      <div class="form" style="border:0;padding:0;margin:0;background:none">
+      ${[["wTag", "tagline", "Frase principal", "Tacos al pastor, bistec y más. Hechos al momento."], ["wAbout", "about", "Sobre nosotros (opcional)", "Desde 2015 en…"],
+         ["wAddr", "address", "Dirección", "Calle, número, colonia, ciudad"], ["wMaps", "mapsUrl", "Enlace de Google Maps (opcional)", "https://maps.app.goo.gl/…"],
+         ["wWa", "whatsapp", "WhatsApp (10 dígitos)", "5512345678"], ["wTel", "phone", "Teléfono", "55 1234 5678"],
+         ["wIg", "instagram", "Instagram (enlace)", "https://instagram.com/tacosjosue"], ["wFb", "facebook", "Facebook (enlace)", "https://facebook.com/…"],
+         ["wTt", "tiktok", "TikTok (enlace)", "https://tiktok.com/@…"]]
+        .map(([id, k, l, ph]) => `<label>${l}<input id="${id}" maxlength="300" placeholder="${esc(ph)}" value="${esc((c.site || {})[k] || "")}"></label>`).join("")}
+      </div></fieldset>
     <label>Fondo de caja (efectivo con el que abres)<input id="sFloat" type="number" min="0" step="1" value="${esc(c.cashFloat ?? "")}" placeholder="Ej. 500"></label>
     <label>Enlace para reseñas en Google (opcional)<input id="sGoogle" maxlength="300" placeholder="https://g.page/r/..." value="${esc(c.googleReviewUrl || "")}"></label>
     <label>Notas rápidas en la comida (separadas por coma)<input id="sNotes" maxlength="200" value="${esc((c.quickNotes && c.quickNotes.length ? c.quickNotes : ["Con todo", "Sin cebolla", "Sin cilantro", "Sin salsa"]).join(", "))}"></label>
@@ -1056,6 +1065,16 @@ document.addEventListener("submit", (ev) => {
       quickNotes: $("sNotes").value.split(",").map((x) => x.replace(/[|+]/g, " ").trim()).filter(Boolean).slice(0, 12),
       upsellCategory: $("sUpsell").value.trim() || "Bebidas",
       cashFloat: Math.max(0, Number($("sFloat").value) || 0),
+      site: (() => {
+        const m = { wTag: "tagline", wAbout: "about", wAddr: "address", wMaps: "mapsUrl", wWa: "whatsapp", wTel: "phone", wIg: "instagram", wFb: "facebook", wTt: "tiktok" };
+        const out = {};
+        for (const [id, k] of Object.entries(m)) {
+          const v = $(id).value.trim().slice(0, 300);
+          if (["mapsUrl", "instagram", "facebook", "tiktok"].includes(k) && v && !/^https:\/\//.test(v)) continue; // solo enlaces https
+          out[k] = v;
+        }
+        return out;
+      })(),
       hours: (() => {
         const out = {}; let any = false;
         for (let i = 0; i < 7; i++) {
