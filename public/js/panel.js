@@ -10,6 +10,7 @@ import {
 import {
   db, auth, configured, OWNER_EMAILS, $, esc, money, toMillis, toast, notConfiguredHtml,
   STATUS_LABEL, DEFAULT_CONFIG, isClosed, endOfToday, prepMinutes, newId, summaryHtml, tableLabel, tableIds, BAR_ID, platesHtml, PLATFORMS, tipPickerHtml, tipAmount, normPhone, DAY_NAMES
+  , phoneLinks
 } from "./common.js";
 
 const state = {
@@ -199,8 +200,8 @@ function whoLabel(o) {
 function casaInfo(o) {
   const sched = o.scheduledFor ? `<span class="tag pop">Para las ${esc(o.scheduledFor)}</span> ` : "";
   const loy = loyaltyBadge(o.phone);
-  if (o.type !== "casa") return sched || loy ? `<div>${sched}${loy}</div>` : "";
-  return `<div class="muted" style="font-size:.88rem">${sched}Tel. <span class="mono">${esc(o.phone)}</span>${o.delivery === "domicilio" ? `<br>${esc(o.address)}${o.zone ? ` · <strong>${esc(o.zone)}</strong>` : ""}${o.deliveryFee ? ` · envío ${money(o.deliveryFee, cur())}` : ""}` : ""} ${loy}</div>`;
+  if (o.type !== "casa") return sched || loy || o.phone ? `<div style="font-size:.88rem">${sched}${phoneLinks(o.phone)} ${loy}</div>` : "";
+  return `<div class="muted" style="font-size:.88rem">${sched}${phoneLinks(o.phone)}${o.delivery === "domicilio" ? `<br>${esc(o.address)}${o.zone ? ` · <strong>${esc(o.zone)}</strong>` : ""}${o.deliveryFee ? ` · envío ${money(o.deliveryFee, cur())}` : ""}` : ""} ${loy}</div>`;
 }
 
 // ---------- lealtad ----------

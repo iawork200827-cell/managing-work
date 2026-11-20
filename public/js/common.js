@@ -180,6 +180,16 @@ export function normPhone(p) {
   return d.length >= 10 ? d.slice(-10) : "";
 }
 
+// Teléfono del cliente con botones para llamarle o escribirle por WhatsApp
+// (por ejemplo, si se acabó algo y hay que cambiarle el pedido)
+export function phoneLinks(phone) {
+  const raw = String(phone || "").trim();
+  if (!raw) return "";
+  const d = raw.replace(/\D/g, "");
+  const wa = d.length === 10 ? "52" + d : d;
+  return `<span class="phone-links"><span class="mono">Tel. ${esc(raw)}</span> <a href="tel:${esc(d)}">Llamar</a> <a href="https://wa.me/${esc(wa)}" target="_blank" rel="noopener">WhatsApp</a></span>`;
+}
+
 // ---------- horario ----------
 // config.hours = { "0": { open: "13:00", close: "23:00", off: false }, ... } (0 = domingo)
 export const DAY_NAMES = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];

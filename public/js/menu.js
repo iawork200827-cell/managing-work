@@ -456,11 +456,11 @@ function renderCart() {
   bar.innerHTML = (state.upsell ? `<div class="in">${upsellHtml()}</div>` : "") + `<div class="in">${totalsHtml()}</div><div class="in">
     <span class="sum">${units} ${units === 1 ? "pieza" : "piezas"} · ${money(cartTotal(), cur())}</span>
     ${MODE === "llevar" ? `<input id="custName" placeholder="Tu nombre" autocomplete="given-name" maxlength="60" value="${esc(state.customer)}" aria-label="Tu nombre">` : ""}
-    ${MODE === "llevar" && loyaltyOn() ? `<input id="custPhone" type="tel" inputmode="tel" placeholder="Tu teléfono (para tu tarjeta de lealtad)" maxlength="20" value="${esc(state.phone)}" aria-label="Teléfono para lealtad">` : ""}
+    ${MODE === "llevar" ? `<input id="custPhone" type="tel" inputmode="tel" autocomplete="tel" required placeholder="Tu teléfono (10 dígitos)" maxlength="20" value="${esc(state.phone)}" aria-label="Tu teléfono">` : ""}
     <input id="custNote" placeholder="Nota (sin cebolla, salsa aparte…)" maxlength="200" value="${esc(state.note)}" aria-label="Nota para la cocina">
     <button class="primary" id="placeOrder" ${state.sending ? "disabled" : ""}>${label}</button>
   </div>
-  ${MODE === "llevar" ? `<div class="in muted" style="font-size:.82rem;margin-top:6px">Pagas al recoger tu pedido.</div>` : ""}`;
+  ${MODE === "llevar" ? `<div class="in muted" style="font-size:.82rem;margin-top:6px">Pagas al recoger tu pedido. Te llamamos o escribimos si algo se acabó, para cambiarlo.</div>` : ""}`;
   if (active && $(active)) $(active).focus();
 }
 
@@ -515,6 +515,7 @@ async function placeOrder() {
   if (!items.length) { toast("Los productos que elegiste se agotaron"); cleanCart(); render(); return; }
   const name = state.customer.trim();
   if (MODE !== "mesa" && !name) { toast("Escribe tu nombre para poder llamarte"); $("custName")?.focus(); return; }
+  if (MODE === "llevar" && !normPhone(state.phone)) { toast("Escribe tu teléfono a 10 dígitos, por si hay que cambiar algo de tu pedido"); $("custPhone")?.focus(); return; }
   const delivery = MODE === "casa" ? (deliveryOn() ? state.delivery : "recoger") : null;
   if (MODE === "casa") {
     if (state.phone.replace(/\D/g, "").length < 7) { toast("Escribe tu teléfono"); $("custPhone")?.focus(); return; }
@@ -562,7 +563,7 @@ async function placeOrder() {
       }
       if (state.when) order.scheduledFor = state.when;
     }
-    if (MODE === "llevar" && normPhone(state.phone)) order.phone = normPhone(state.phone);
+    if (MODE === "llevar") order.phone = normPhone(state.phone);
     if (MODE === "mesa") {
       order.table = state.table;
       order.session = await ensureTableSession();

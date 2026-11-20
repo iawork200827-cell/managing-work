@@ -216,3 +216,6 @@ input[type="checkbox"] { width: auto }
 .hrow > span { width: 90px }
 .hrow input[type=time] { width: auto }
 textarea { font: inherit; color: inherit; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; width: 100% }
+/* Teléfono del cliente con botones para llamar / WhatsApp */
+.phone-links { display: inline-flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline }
+.phone-links a { font-weight: 700; color: var(--accent) }

@@ -78,7 +78,8 @@ service cloud.firestore {
           // Para llevar en el local: entra directo a cocina y se paga al recoger
           (d.type == 'llevar' && d.status == 'pendiente'
             && d.customer is string && d.customer.size() > 0 && d.customer.size() <= 60
-            && (!('phone' in d) || (d.phone is string && d.phone.size() <= 20)))
+            && (('phone' in d && d.phone is string && d.phone.size() >= 10 && d.phone.size() <= 20)
+                || (isTeam() && !('phone' in d))))
           ||
           // Ronda de una mesa: el celular debe conocer la sesión secreta de una cuenta abierta
           // de esa mesa (la abrió con el QR o se unió con el código)

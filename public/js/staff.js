@@ -9,6 +9,7 @@ import { signInAnonymously, onAuthStateChanged, signOut } from "https://www.gsta
 import {
   db, auth, configured, OWNER_EMAILS, $, esc, money, toMillis, local, toast, notConfiguredHtml,
   STATUS_LABEL, DEFAULT_CONFIG, prepMinutes, newId, showErrorsOnPage, summaryHtml, isClosed, tableLabel, tableIds, BAR_ID, platesHtml, PLATFORMS, tipPickerHtml, tipAmount, normPhone
+  , phoneLinks
 } from "./common.js";
 import { buildItems, isOut as isOutP, totals, productCard, selectionFor, handleSelectClick } from "./cart.js";
 
@@ -120,7 +121,7 @@ function takeoutHtml() {
     <button data-newplatform="uber">+ Uber Eats</button><button data-newplatform="didi">+ DiDi Food</button></div>`;
   if (!mine.length) return html + '<div class="empty">No hay pedidos para llevar ni de plataformas en curso.</div>';
   html += '<div class="plist">';
-  for (const o of mine) html += `<div class="prow"><div>${o.type === "plataforma" ? `<span class="tag plat">${esc(PLATFORMS[o.platform])} #${esc(o.extRef)}</span> ` : ""}<strong>${esc(o.customer || "")}</strong> <span class="mono muted">#${esc(o.code)}</span>${o.phone ? ` · <span class="mono">${esc(o.phone)}</span>` : ""}
+  for (const o of mine) html += `<div class="prow"><div>${o.type === "plataforma" ? `<span class="tag plat">${esc(PLATFORMS[o.platform])} #${esc(o.extRef)}</span> ` : ""}<strong>${esc(o.customer || "")}</strong> <span class="mono muted">#${esc(o.code)}</span>${o.phone ? ` · ${phoneLinks(o.phone)}` : ""}
       <div class="muted" style="font-size:.82rem">${STATUS_LABEL[o.status]} · hace ${Math.max(0, Math.round((Date.now() - o.createdAt) / 60000))} min</div></div>
       <div class="price">${money(o.total, cur())}</div></div>`;
   return html + "</div>";
@@ -137,7 +138,7 @@ function deliveryHtml() {
       <div><strong>${esc(o.customer)}</strong>${o.scheduledFor ? ` <span class="tag pop">Para las ${esc(o.scheduledFor)}</span>` : ""}</div>
       <div>${esc(o.address)}${o.zone ? ` · <strong>${esc(o.zone)}</strong>` : ""}</div>
       <div class="acts"><a class="switch-link" href="${esc(maps)}" target="_blank" rel="noopener">Abrir en el mapa</a>
-        <span class="mono">Tel. ${esc(o.phone)}</span></div>
+        ${phoneLinks(o.phone)}</div>
       ${itemsByPlate(o.items)}
       <div class="row"><span class="muted">${o.paid ? "Ya pagó (transferencia)" : "Cobrar al entregar"}</span><span class="price">${money(o.total, cur())}</span></div>
       ${o.status === "listo" ? `<div class="acts"><button class="primary" data-advance="${esc(o.id)}" data-to="entregado">Entregado</button></div>` : '<p class="muted" style="margin:0">Todavía en cocina</p>'}</div>`;
