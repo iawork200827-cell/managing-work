@@ -38,6 +38,30 @@ const db = admin.firestore();
     }
   } catch (e) { console.log("No pude revisar el acceso de empleados: " + e.message); }
 
+  // Dominio propio: tacosjosue.mx (y www que redirige). Imprime los registros DNS que hay que poner en Akky.
+  try {
+    const token = (await admin.credential.applicationDefault().getAccessToken()).access_token;
+    const H = { Authorization: "Bearer " + token, "Content-Type": "application/json" };
+    const base = `https://firebasehosting.googleapis.com/v1beta1/projects/${process.env.PROJECT_ID}/sites/${process.env.PROJECT_ID}/customDomains`;
+    for (const [name, body] of [["tacosjosue.mx", {}], ["www.tacosjosue.mx", { redirectTarget: "tacosjosue.mx" }]]) {
+      let r = await fetch(`${base}/${name}`, { headers: H });
+      if (r.status === 404) {
+        const c = await fetch(`${base}?customDomainId=${name}`, { method: "POST", headers: H, body: JSON.stringify(body) });
+        console.log(`Dominio ${name}: ${c.ok ? "agregado a Firebase" : "no se pudo agregar " + c.status + " " + (await c.text()).slice(0, 300)}`);
+        await new Promise((res) => setTimeout(res, 8000));
+        r = await fetch(`${base}/${name}`, { headers: H });
+      }
+      const d = await r.json();
+      if (!r.ok) { console.log(`Dominio ${name}: error ${r.status} ${JSON.stringify(d).slice(0, 300)}`); continue; }
+      console.log(`Dominio ${name}: host=${d.hostState || "?"} propiedad=${d.ownershipState || "?"} certificado=${(d.cert && d.cert.state) || "?"}`);
+      const upd = d.requiredDnsUpdates || {};
+      for (const set of upd.desired || []) for (const rec of set.records || [])
+        console.log(`  PONER en Akky -> ${set.domainName}  ${rec.type}  ${rec.rdata}  (${rec.requiredAction || "ADD"})`);
+      for (const set of upd.discovered || []) for (const rec of set.records || [])
+        if (rec.requiredAction === "REMOVE") console.log(`  QUITAR en Akky -> ${set.domainName}  ${rec.type}  ${rec.rdata}`);
+    }
+  } catch (e) { console.log("No pude revisar el dominio: " + e.message); }
+
   const staff = await db.doc("staffConfig/main").get();
   console.log("PIN de empleados: " + (staff.exists && staff.data().pin ? "configurado" : "falta (ponlo en Panel → Ajustes)"));
 
