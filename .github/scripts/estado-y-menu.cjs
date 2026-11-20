@@ -65,6 +65,14 @@ const db = admin.firestore();
   const staff = await db.doc("staffConfig/main").get();
   console.log("PIN de empleados: " + (staff.exists && staff.data().pin ? "configurado" : "falta (ponlo en Panel → Ajustes)"));
 
+  // Redes de la taquería en la página web (solo se llenan si están vacías; después se editan en Panel → Ajustes)
+  {
+    const shopRef = db.doc("config/shop"), cur = (await shopRef.get()).data() || {}, site = cur.site || {};
+    const add = {};
+    if (!site.tiktok) add.tiktok = "https://www.tiktok.com/@tacos.josue";
+    if (!site.instagram) add.instagram = "https://www.instagram.com/tacos.josue/";
+    if (Object.keys(add).length) { await shopRef.set({ site: add }, { merge: true }); console.log("Redes agregadas a la página: " + Object.keys(add).join(", ")); }
+  }
   const cfg = await db.doc("config/shop").get();
   if (cfg.exists) {
     const c = cfg.data();
