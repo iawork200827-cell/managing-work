@@ -397,7 +397,7 @@ function settingsHtml() {
     <label class="check"><input id="sLoyOn" type="checkbox" ${c.loyalty && c.loyalty.on ? "checked" : ""}> Programa de lealtad (por teléfono)</label>
     <label>Visitas para el premio<input id="sLoyEvery" type="number" min="2" max="50" value="${esc((c.loyalty && c.loyalty.every) || 10)}"></label>
     <label>Premio<input id="sLoyReward" maxlength="80" value="${esc((c.loyalty && c.loyalty.reward) || "Una orden de tacos gratis")}"></label>
-    <fieldset style="grid-column:1/-1;border:1px solid var(--line);border-radius:10px;padding:10px"><legend class="label">Página web (tacos-josue.web.app)</legend>
+    <fieldset style="grid-column:1/-1;border:1px solid var(--line);border-radius:10px;padding:10px"><legend class="label">Página web (tacosjosue.mx)</legend>
       <div class="form" style="border:0;padding:0;margin:0;background:none">
       ${[["wTag", "tagline", "Frase principal", "Tacos al pastor, bistec y más. Hechos al momento."], ["wAbout", "about", "Sobre nosotros (opcional)", "Desde 2015 en…"],
          ["wAddr", "address", "Dirección", "Calle, número, colonia, ciudad"], ["wMaps", "mapsUrl", "Enlace de Google Maps (opcional)", "https://maps.app.goo.gl/…"],
