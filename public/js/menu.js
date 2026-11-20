@@ -204,7 +204,7 @@ function chooseTab() {
     <div class="full" style="border-top:1px solid var(--line);padding-top:12px">
       ${state.tableKey
         ? `<p class="muted" style="margin:0 0 8px">¿Es la primera cuenta de la mesa o quieren <strong>pagar aparte</strong>? Abre una cuenta nueva y comparte su código.</p>
-           <div style="display:flex;gap:8px;flex-wrap:wrap"><input id="tabName" maxlength="40" autocomplete="name" placeholder="Tu nombre (opcional)" style="flex:1 1 160px;width:auto" value="${esc(state.tabName)}">
+           <div style="display:flex;gap:8px;flex-wrap:wrap"><input id="tabName" maxlength="40" autocomplete="name" placeholder="Tu nombre" style="flex:1 1 160px;width:auto" value="${esc(state.tabName)}">
            ${loyaltyOn() ? `<input id="tabPhone" type="tel" inputmode="tel" maxlength="20" placeholder="Teléfono (tarjeta de lealtad)" style="flex:1 1 160px;width:auto" value="${esc(state.tabPhone)}">` : ""}
            <button data-newtab>Abrir cuenta nueva</button></div>`
         : `<p class="muted" style="margin:0">Para abrir una cuenta nueva, <strong>escanea el código QR que está en tu mesa</strong>.</p>`}
@@ -456,11 +456,11 @@ function renderCart() {
   bar.innerHTML = (state.upsell ? `<div class="in">${upsellHtml()}</div>` : "") + `<div class="in">${totalsHtml()}</div><div class="in">
     <span class="sum">${units} ${units === 1 ? "pieza" : "piezas"} · ${money(cartTotal(), cur())}</span>
     ${MODE === "llevar" ? `<input id="custName" placeholder="Tu nombre" autocomplete="given-name" maxlength="60" value="${esc(state.customer)}" aria-label="Tu nombre">` : ""}
-    ${MODE === "llevar" ? `<input id="custPhone" type="tel" inputmode="tel" autocomplete="tel" required placeholder="Tu teléfono (10 dígitos)" maxlength="20" value="${esc(state.phone)}" aria-label="Tu teléfono">` : ""}
+    ${MODE === "llevar" && loyaltyOn() ? `<input id="custPhone" type="tel" inputmode="tel" placeholder="Tu teléfono (para tu tarjeta de lealtad)" maxlength="20" value="${esc(state.phone)}" aria-label="Teléfono para lealtad">` : ""}
     <input id="custNote" placeholder="Nota (sin cebolla, salsa aparte…)" maxlength="200" value="${esc(state.note)}" aria-label="Nota para la cocina">
     <button class="primary" id="placeOrder" ${state.sending ? "disabled" : ""}>${label}</button>
   </div>
-  ${MODE === "llevar" ? `<div class="in muted" style="font-size:.82rem;margin-top:6px">Pagas al recoger tu pedido. Te llamamos o escribimos si algo se acabó, para cambiarlo.</div>` : ""}`;
+  ${MODE === "llevar" ? `<div class="in muted" style="font-size:.82rem;margin-top:6px">Pagas al recoger tu pedido.</div>` : ""}`;
   if (active && $(active)) $(active).focus();
 }
 
@@ -515,7 +515,6 @@ async function placeOrder() {
   if (!items.length) { toast("Los productos que elegiste se agotaron"); cleanCart(); render(); return; }
   const name = state.customer.trim();
   if (MODE !== "mesa" && !name) { toast("Escribe tu nombre para poder llamarte"); $("custName")?.focus(); return; }
-  if (MODE === "llevar" && !normPhone(state.phone)) { toast("Escribe tu teléfono a 10 dígitos, por si hay que cambiar algo de tu pedido"); $("custPhone")?.focus(); return; }
   const delivery = MODE === "casa" ? (deliveryOn() ? state.delivery : "recoger") : null;
   if (MODE === "casa") {
     if (state.phone.replace(/\D/g, "").length < 7) { toast("Escribe tu teléfono"); $("custPhone")?.focus(); return; }
@@ -526,6 +525,7 @@ async function placeOrder() {
 
   if (MODE === "mesa" && !inTab()) {
     if (!state.tableKey) { toast("Escanea el QR de tu mesa, o escribe el código de la cuenta de tu mesa para unirte."); return; }
+    if (!state.tabName.trim()) { toast("Escribe tu nombre para abrir la cuenta"); $("tabName")?.focus(); return; }
     if (!state.confirmNewTab) {
       state.confirmNewTab = true; renderCart();
       toast("Se abrirá una cuenta nueva solo para ti. Si tu mesa ya tiene cuenta, mejor escribe su código arriba.");
@@ -563,7 +563,7 @@ async function placeOrder() {
       }
       if (state.when) order.scheduledFor = state.when;
     }
-    if (MODE === "llevar") order.phone = normPhone(state.phone);
+    if (MODE === "llevar" && normPhone(state.phone)) order.phone = normPhone(state.phone);
     if (MODE === "mesa") {
       order.table = state.table;
       order.session = await ensureTableSession();
@@ -680,6 +680,7 @@ document.addEventListener("click", (ev) => {
   if ("invoiceopen" in d) { state.invoiceOpen = true; render(); $("invRfc")?.focus(); return; }
   if ("invoiceclose" in d) { state.invoiceOpen = false; render(); return; }
   if ("newtab" in d) {
+    if (!state.tabName.trim()) { toast("Escribe tu nombre para abrir la cuenta"); $("tabName")?.focus(); return; }
     openNewTab().then(() => toast("Cuenta nueva abierta. Comparte su código con quien pida contigo."),
       (e) => toast(e.code === "closed" ? "Hoy ya no estamos recibiendo pedidos" : "No se pudo abrir la cuenta. Escanea otra vez el QR de la mesa."));
     return;
