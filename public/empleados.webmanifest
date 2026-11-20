@@ -1,0 +1,16 @@
+{
+  "id": "/empleados",
+  "name": "Tacos Josué · Empleados",
+  "short_name": "Empleados TJ",
+  "start_url": "/empleados",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#13392d",
+  "theme_color": "#13392d",
+  "lang": "es-MX",
+  "icons": [
+    { "src": "/img/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/img/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
