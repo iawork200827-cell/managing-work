@@ -42,7 +42,12 @@ function renderInfo() {
   $("social").innerHTML = links.join("");
 
   if (site.about) { $("about").hidden = false; $("aboutText").textContent = site.about; }
-  if (c.zones && c.zones.length) $("howCasa").textContent = `Llegamos a ${c.zones.map((z) => z.name).slice(0, 6).join(", ")}${c.zones.length > 6 ? " y más" : ""}. O pasa a recoger. Pagas antes por transferencia.`;
+  // El envío depende de que haya repartidor ese día: se prende y apaga en el panel (Domicilio)
+  const zonesTxt = c.zones && c.zones.length ? ` a ${c.zones.map((z) => z.name).slice(0, 6).join(", ")}${c.zones.length > 6 ? " y más" : ""}` : "";
+  $("howCasa").textContent = c.deliveryOn
+    ? `Envío${zonesTxt}, sujeto a disponibilidad. O pasa a recoger. Pagas antes por transferencia.`
+    : `Hoy no tenemos envíos${zonesTxt ? " (llevamos" + zonesTxt + " cuando hay repartidor)" : ""}. Pide y pasa a recoger. Pagas antes por transferencia.`;
+  $("casaBtn").textContent = c.deliveryOn ? "Pedir a domicilio" : "Pedir y recoger";
 
   const promos = promoLabels(c);
   $("promoBand").hidden = !promos.length;
