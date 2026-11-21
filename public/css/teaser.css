@@ -2,30 +2,23 @@
    Se prende y apaga en Panel → Ajustes → Página web. */
 html.cs body > :not(#teaser) { display: none !important }
 html.cs, html.cs body { background: #0f2c23 }
-#teaser { --cream: #f4efe6; --chile: #ff6a2b; --gold: #ffc23d; --deep: #0f2c23;
+#teaser { --cream: #fff8ee; --chile: #e11d2e; --gold: #ffd257; --deep: #0b2a1d;
   min-height: 100svh; display: flex; flex-direction: column; align-items: center; text-align: center;
   color: var(--cream); background:
-    radial-gradient(120% 70% at 50% 0%, rgba(255, 106, 43, .28), transparent 60%),
-    radial-gradient(90% 60% at 50% 110%, rgba(255, 194, 61, .18), transparent 60%), var(--deep);
+    radial-gradient(120% 70% at 50% 0%, rgba(225, 29, 46, .30), transparent 60%),
+    radial-gradient(90% 60% at 50% 110%, rgba(255, 210, 87, .20), transparent 60%), var(--deep);
   font-family: "Inter", system-ui, sans-serif; overflow: hidden; position: relative }
 #teaser * { box-sizing: border-box }
-.tz-flags { display: flex; justify-content: center; gap: 6px; width: 100%; padding-top: env(safe-area-inset-top, 0px) }
-.tz-flags span { width: 46px; height: 40px; clip-path: polygon(0 0, 100% 0, 100% 78%, 84% 100%, 68% 78%, 50% 100%, 32% 78%, 16% 100%, 0 78%);
-  animation: tz-sway 3s ease-in-out infinite; transform-origin: top center }
-.tz-flags span:nth-child(5n+1) { background: #e6007e } .tz-flags span:nth-child(5n+2) { background: #00a6d6; animation-delay: .3s }
-.tz-flags span:nth-child(5n+3) { background: #7cc242; animation-delay: .6s } .tz-flags span:nth-child(5n+4) { background: #ffc23d; animation-delay: .9s }
-.tz-flags span:nth-child(5n) { background: #8e44ad; animation-delay: 1.2s }
-@keyframes tz-sway { 50% { transform: rotate(4deg) } }
 .tz-in { width: 100%; max-width: 560px; padding: 34px max(18px, env(safe-area-inset-left, 0px)) calc(28px + env(safe-area-inset-bottom, 0px));
   display: flex; flex-direction: column; align-items: center; gap: 18px; position: relative; z-index: 1 }
 .tz-brand { font-family: "Bricolage Grotesque", "Inter", sans-serif; font-weight: 800; letter-spacing: .18em; text-transform: uppercase; font-size: .85rem; opacity: .85 }
 .tz-brand b { color: var(--chile) }
-.tz-fire { font-size: 3.4rem; line-height: 1; animation: tz-bob 1.6s ease-in-out infinite; filter: drop-shadow(0 6px 18px rgba(255, 106, 43, .55)) }
+.tz-fire { font-size: 3.4rem; line-height: 1; animation: tz-bob 1.6s ease-in-out infinite; filter: drop-shadow(0 6px 18px rgba(255, 210, 87, .45)) }
 @keyframes tz-bob { 50% { transform: translateY(-8px) scale(1.06) } }
-.tz-eyebrow { display: inline-block; background: rgba(255, 106, 43, .16); border: 1px solid rgba(255, 106, 43, .5); color: var(--gold);
+.tz-eyebrow { display: inline-block; background: rgba(225, 29, 46, .2); border: 1px solid rgba(255, 77, 90, .6); color: var(--gold);
   padding: 6px 14px; border-radius: 999px; font-weight: 700; font-size: .85rem; letter-spacing: .04em }
 .tz-title { margin: 0; font-family: "Bricolage Grotesque", "Inter", sans-serif; font-weight: 800; font-size: clamp(2.8rem, 13vw, 4.6rem); line-height: .92; letter-spacing: -.03em }
-.tz-title span { display: block; background: linear-gradient(90deg, var(--gold), var(--chile), #ff3d6e, var(--gold)); background-size: 300% 100%;
+.tz-title span { display: block; background: linear-gradient(90deg, var(--gold), #ff4d5a, #fff8ee, #3ccf6e, var(--gold)); background-size: 300% 100%;
   -webkit-background-clip: text; background-clip: text; color: transparent; animation: tz-shine 4s linear infinite }
 @keyframes tz-shine { to { background-position: 300% 0 } }
 .tz-sub { margin: 0; font-size: 1.08rem; line-height: 1.45; max-width: 34ch; opacity: .92 }
@@ -33,7 +26,7 @@ html.cs, html.cs body { background: #0f2c23 }
 .tz-hints span { background: rgba(244, 239, 230, .08); border: 1px dashed rgba(244, 239, 230, .3); padding: 6px 12px; border-radius: 999px; font-size: .9rem }
 .tz-load { width: 100%; max-width: 360px; text-align: left; font-size: .85rem; opacity: .9 }
 .tz-bar { margin-top: 6px; height: 10px; border-radius: 999px; background: rgba(244, 239, 230, .12); overflow: hidden }
-.tz-bar i { display: block; height: 100%; width: 87%; border-radius: inherit; background: linear-gradient(90deg, var(--gold), var(--chile));
+.tz-bar i { display: block; height: 100%; width: 87%; border-radius: inherit; background: repeating-linear-gradient(135deg, #e11d2e 0 12px, #fff8ee 12px 24px);
   animation: tz-fill 2.4s ease-out both, tz-pulse 1.6s 2.4s ease-in-out infinite }
 @keyframes tz-fill { from { width: 0 } } @keyframes tz-pulse { 50% { opacity: .65 } }
 .tz-card { width: 100%; background: rgba(244, 239, 230, .06); border: 1px solid rgba(244, 239, 230, .16); border-radius: 22px; padding: 18px; display: flex; flex-direction: column; gap: 12px }
@@ -55,3 +48,17 @@ html.cs, html.cs body { background: #0f2c23 }
 .tz-float { position: absolute; font-size: 2rem; opacity: .16; animation: tz-float 9s ease-in-out infinite; pointer-events: none; z-index: 0 }
 @keyframes tz-float { 50% { transform: translateY(-26px) rotate(12deg) } }
 @media (prefers-reduced-motion: reduce) { #teaser *, #teaser { animation: none !important } }
+
+/* Navidad: nieve, foquitos y bastón de caramelo */
+.tz-snow { position: absolute; inset: 0; pointer-events: none; z-index: 0; overflow: hidden }
+.tz-snow i { position: absolute; top: -20px; color: #fff; opacity: .75; font-style: normal; animation: tz-fall linear infinite }
+@keyframes tz-fall { to { transform: translate(30px, 110svh) rotate(240deg) } }
+.tz-lights { display: flex; justify-content: space-around; width: 100%; padding: 14px 6px 0; position: relative; z-index: 1 }
+.tz-lights::before { content: ""; position: absolute; left: 0; right: 0; top: 8px; height: 14px; border-bottom: 2px solid #2d4a3a; border-radius: 0 0 50% 50% }
+.tz-lights span { width: 12px; height: 18px; border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%; position: relative; animation: tz-blink 1.4s ease-in-out infinite }
+.tz-lights span:nth-child(4n+1) { background: #ff4d5a; box-shadow: 0 0 12px #ff4d5a }
+.tz-lights span:nth-child(4n+2) { background: #ffd257; box-shadow: 0 0 12px #ffd257; animation-delay: .35s }
+.tz-lights span:nth-child(4n+3) { background: #3ccf6e; box-shadow: 0 0 12px #3ccf6e; animation-delay: .7s }
+.tz-lights span:nth-child(4n) { background: #4fb3ff; box-shadow: 0 0 12px #4fb3ff; animation-delay: 1.05s }
+@keyframes tz-blink { 50% { opacity: .35; box-shadow: none } }
+.tz-card { border-color: rgba(255, 210, 87, .28) }
