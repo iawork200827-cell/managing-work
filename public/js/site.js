@@ -35,6 +35,7 @@ function renderInfo() {
   const contact = [];
   if (site.whatsapp) { const n = String(site.whatsapp).replace(/\D/g, ""); contact.push(`<a class="btn-main" href="https://wa.me/${n.length === 10 ? "52" + n : n}" target="_blank" rel="noopener">WhatsApp</a>`); }
   if (site.phone) contact.push(`<a class="btn-alt dark" href="tel:${esc(String(site.phone).replace(/[^\d+]/g, ""))}">Llamar ${esc(site.phone)}</a>`);
+  if (c.googleReviewUrl) contact.push(`<a class="btn-alt dark" href="${esc(c.googleReviewUrl)}" target="_blank" rel="noopener">★ Déjanos tu reseña en Google</a>`);
   $("contact").innerHTML = contact.join("") || '<p class="muted">Pide en línea con los botones de arriba.</p>';
   const links = [["instagram", "Instagram"], ["facebook", "Facebook"], ["tiktok", "TikTok"], ["google", "Reseñas en Google"]]
     .filter(([k]) => site[k] || (k === "google" && c.googleReviewUrl))

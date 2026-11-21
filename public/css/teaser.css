@@ -72,3 +72,6 @@ html.cs, html.cs body { background: #0f2c23 }
 @keyframes tz-blinkface { 0%, 92%, 100% { transform: scaleY(1) } 95% { transform: scaleY(.1) } }
 .tz-spark { transform-box: fill-box; transform-origin: center; animation: tz-twinkle 1.6s ease-in-out infinite }
 @keyframes tz-twinkle { 50% { transform: scale(.4) rotate(45deg); opacity: .5 } }
+.tz-gr { background: #fff; color: #1f1f1f } .tz-gr svg { color: #fbbc04 }
+.tz-gm { background: #1a73e8 }
+.tz-row .tz-btn { padding: 12px 10px; font-size: .95rem; white-space: nowrap; gap: 8px }
