@@ -71,6 +71,7 @@ const db = admin.firestore();
     const add = {};
     if (!site.tiktok) add.tiktok = "https://www.tiktok.com/@tacos.josue";
     if (!site.instagram) add.instagram = "https://www.instagram.com/tacos.josue/";
+    if (!site.spotify) add.spotify = "https://open.spotify.com/playlist/2WJgumnXJJbc5g9tcI3Ers";
     if (Object.keys(add).length) { await shopRef.set({ site: add }, { merge: true }); console.log("Redes agregadas a la página: " + Object.keys(add).join(", ")); }
   }
   const cfg = await db.doc("config/shop").get();
