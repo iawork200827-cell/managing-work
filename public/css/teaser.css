@@ -62,3 +62,12 @@ html.cs, html.cs body { background: #0f2c23 }
 .tz-lights span:nth-child(4n) { background: #4fb3ff; box-shadow: 0 0 12px #4fb3ff; animation-delay: 1.05s }
 @keyframes tz-blink { 50% { opacity: .35; box-shadow: none } }
 .tz-card { border-color: rgba(255, 210, 87, .28) }
+
+/* Taquito con gorro de Santa */
+.tz-mascot { font-size: 0; filter: drop-shadow(0 10px 22px rgba(225, 29, 46, .35)) }
+.tz-mascot .tz-hat { transform-origin: 88px 100px; animation: tz-hat 2.4s ease-in-out infinite }
+@keyframes tz-hat { 50% { transform: rotate(-6deg) } }
+.tz-mascot .tz-face { animation: tz-blinkface 4s infinite; transform-origin: center 136px }
+@keyframes tz-blinkface { 0%, 92%, 100% { transform: scaleY(1) } 95% { transform: scaleY(.1) } }
+.tz-spark { transform-box: fill-box; transform-origin: center; animation: tz-twinkle 1.6s ease-in-out infinite }
+@keyframes tz-twinkle { 50% { transform: scale(.4) rotate(45deg); opacity: .5 } }
