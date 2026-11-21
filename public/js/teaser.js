@@ -45,7 +45,7 @@ function render(site = {}) {
       </section>
       ${more.length ? `<section class="tz-card"><h2>Más contenido</h2><p>Detrás del trompo, retos y antojos navideños.</p>
         <div class="tz-row ${more.length === 1 ? "one" : ""}">${more.join("")}</div></section>` : ""}
-      ${site.spotify ? `<section class="tz-card"><h2>🎧 La playlist de la taquería</h2><p>Una selección especial para acompañar tus tacos esta temporada ✨</p>
+      ${site.spotify ? `<section class="tz-card"><h2>🎧 La playlist de la taquería</h2><p>El soundtrack perfecto para tus tacos de temporada 🎄</p>
         ${link("tz-sp", site.spotify, ICON.sp, "Escuchar en Spotify")}</section>` : ""}
       <p class="tz-quote">${esc(site.slogan || DEFAULT_QUOTE)}</p>
       <p class="tz-small">tacosjosue.mx</p>
