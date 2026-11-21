@@ -399,12 +399,15 @@ function settingsHtml() {
     <label>Visitas para el premio<input id="sLoyEvery" type="number" min="2" max="50" value="${esc((c.loyalty && c.loyalty.every) || 10)}"></label>
     <label>Premio<input id="sLoyReward" maxlength="80" value="${esc((c.loyalty && c.loyalty.reward) || "Una orden de tacos gratis")}"></label>
     <fieldset style="grid-column:1/-1;border:1px solid var(--line);border-radius:10px;padding:10px"><legend class="label">Página web (tacosjosue.mx)</legend>
+      <label class="check"><input id="wSoon" type="checkbox" ${(c.site || {}).comingSoon !== false ? "checked" : ""}> Modo «Muy pronto»: los clientes ven el aviso de lanzamiento en lugar de la página y los pedidos</label>
+      <p class="muted" style="margin:4px 0 10px;font-size:.85rem">Para ver la página real sin apagarlo: <a href="/?ver=todo" target="_blank" rel="noopener">tacosjosue.mx/?ver=todo</a>. El panel y el modo empleado siguen funcionando.</p>
       <div class="form" style="border:0;padding:0;margin:0;background:none">
       ${[["wTag", "tagline", "Frase principal", "Tacos al pastor, bistec y más. Hechos al momento."], ["wAbout", "about", "Sobre nosotros (opcional)", "Desde 2015 en…"],
          ["wAddr", "address", "Dirección", "Calle, número, colonia, ciudad"], ["wMaps", "mapsUrl", "Enlace de Google Maps (opcional)", "https://maps.app.goo.gl/…"],
          ["wWa", "whatsapp", "WhatsApp (10 dígitos)", "5512345678"], ["wTel", "phone", "Teléfono", "55 1234 5678"],
          ["wIg", "instagram", "Instagram (enlace)", "https://instagram.com/tacosjosue"], ["wFb", "facebook", "Facebook (enlace)", "https://facebook.com/…"],
-         ["wTt", "tiktok", "TikTok (enlace)", "https://tiktok.com/@…"]]
+         ["wTt", "tiktok", "TikTok (enlace)", "https://tiktok.com/@…"], ["wSp", "spotify", "Playlist de Spotify (enlace)", "https://open.spotify.com/playlist/…"],
+         ["wSlogan", "slogan", "Frase taquera (aviso «Muy pronto»)", "Sin tacos no hay paraíso 🌮"]]
         .map(([id, k, l, ph]) => `<label>${l}<input id="${id}" maxlength="300" placeholder="${esc(ph)}" value="${esc((c.site || {})[k] || "")}"></label>`).join("")}
       </div></fieldset>
     <label>Fondo de caja (efectivo con el que abres)<input id="sFloat" type="number" min="0" step="1" value="${esc(c.cashFloat ?? "")}" placeholder="Ej. 500"></label>
@@ -1067,11 +1070,11 @@ document.addEventListener("submit", (ev) => {
       upsellCategory: $("sUpsell").value.trim() || "Bebidas",
       cashFloat: Math.max(0, Number($("sFloat").value) || 0),
       site: (() => {
-        const m = { wTag: "tagline", wAbout: "about", wAddr: "address", wMaps: "mapsUrl", wWa: "whatsapp", wTel: "phone", wIg: "instagram", wFb: "facebook", wTt: "tiktok" };
-        const out = {};
+        const m = { wTag: "tagline", wAbout: "about", wAddr: "address", wMaps: "mapsUrl", wWa: "whatsapp", wTel: "phone", wIg: "instagram", wFb: "facebook", wTt: "tiktok", wSp: "spotify", wSlogan: "slogan" };
+        const out = { comingSoon: $("wSoon").checked };
         for (const [id, k] of Object.entries(m)) {
           const v = $(id).value.trim().slice(0, 300);
-          if (["mapsUrl", "instagram", "facebook", "tiktok"].includes(k) && v && !/^https:\/\//.test(v)) continue; // solo enlaces https
+          if (["mapsUrl", "instagram", "facebook", "tiktok", "spotify"].includes(k) && v && !/^https:\/\//.test(v)) continue; // solo enlaces https
           out[k] = v;
         }
         return out;
