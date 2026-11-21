@@ -64,6 +64,7 @@ html.cs, html.cs body { background: #0f2c23 }
 .tz-card { border-color: rgba(255, 210, 87, .28) }
 
 /* Taquito con gorro de Santa */
+.tz-mascot img { display: block; width: 220px; height: auto; max-width: 60vw }
 .tz-mascot { font-size: 0; filter: drop-shadow(0 10px 22px rgba(225, 29, 46, .35)) }
 .tz-mascot .tz-hat { transform-origin: 88px 100px; animation: tz-hat 2.4s ease-in-out infinite }
 @keyframes tz-hat { 50% { transform: rotate(-6deg) } }

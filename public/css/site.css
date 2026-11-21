@@ -47,3 +47,10 @@
 .site-foot { text-align: center; padding: 24px 16px calc(24px + env(safe-area-inset-bottom, 0px)); color: var(--muted); border-top: 1px solid var(--line) }
 .site-foot a { color: inherit }
 .menu-grid { align-items: start }
+
+/* Taquín, la mascota, saludando en la portada */
+.hero-in { position: relative }
+.hero-mascot { width: 170px; height: auto; align-self: center; order: -1; animation: hero-bob 2.6s ease-in-out infinite }
+@keyframes hero-bob { 50% { transform: translateY(-6px) rotate(-2deg) } }
+@media (min-width: 760px) { .hero-mascot { position: absolute; right: 0; top: 50%; width: 260px; margin-top: -115px; order: 0 } .hero-tag { max-width: 30ch } }
+@media (prefers-reduced-motion: reduce) { .hero-mascot { animation: none } }
