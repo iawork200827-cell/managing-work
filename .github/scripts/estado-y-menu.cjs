@@ -69,11 +69,13 @@ const db = admin.firestore();
   {
     const shopRef = db.doc("config/shop"), cur = (await shopRef.get()).data() || {}, site = cur.site || {};
     const add = {};
-    if (!site.tiktok) add.tiktok = "https://www.tiktok.com/@tacos.josue";
     if (!site.instagram) add.instagram = "https://www.instagram.com/tacos.josue/";
     if (!site.spotify) add.spotify = "https://open.spotify.com/playlist/2WJgumnXJJbc5g9tcI3Ers";
     if (!site.mapsUrl) add.mapsUrl = "https://maps.app.goo.gl/bdtipyk2GbN6PedF9";
     if (!site.address) add.address = "Calz. de las Haciendas 312, Privadas de La Hacienda, Privada Hacienda de San Agustín, 78438 Soledad de Graciano Sánchez, S.L.P.";
+    // TikTok oculto por ahora (una sola vez; después se vuelve a poner en Panel → Ajustes)
+    const mig = db.doc("config/migraciones"), done = (await mig.get()).data() || {};
+    if (!done.tiktokOculto) { add.tiktok = ""; await mig.set({ tiktokOculto: true }, { merge: true }); console.log("TikTok quitado de la página"); }
     if (Object.keys(add).length) { await shopRef.set({ site: add }, { merge: true }); console.log("Redes agregadas a la página: " + Object.keys(add).join(", ")); }
     if (!cur.googleReviewUrl) { await shopRef.set({ googleReviewUrl: "https://g.page/r/CbVVrDb3wBHREAE/review" }, { merge: true }); console.log("Enlace de reseñas de Google agregado"); }
   }

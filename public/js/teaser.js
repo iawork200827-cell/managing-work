@@ -15,7 +15,6 @@ const ICON = {
   sp: '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10"/><path d="M7 9.5c3.5-1 7.5-.7 10.5 1M7.5 12.6c3-.8 6.2-.5 8.8.9M8 15.5c2.4-.6 4.9-.4 7 .7" stroke="#1db954" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>'
 };
 const DEFAULT_IG = "https://www.instagram.com/tacos.josue/";
-const DEFAULT_TT = "https://www.tiktok.com/@tacos.josue";
 const DEFAULT_QUOTE = "Navidad sin tacos… no es Navidad";
 
 const link = (cls, href, icon, label) => `<a class="tz-btn ${cls}" href="${esc(href)}" target="_blank" rel="noopener">${icon}<span>${label}</span></a>`;
@@ -23,7 +22,7 @@ const link = (cls, href, icon, label) => `<a class="tz-btn ${cls}" href="${esc(h
 function render(site = {}, cfg = {}) {
   let box = document.getElementById("teaser");
   if (!box) { box = document.createElement("div"); box.id = "teaser"; document.body.prepend(box); }
-  const ig = site.instagram || DEFAULT_IG, tt = site.tiktok || DEFAULT_TT;
+  const ig = site.instagram || DEFAULT_IG, tt = site.tiktok || "";
   const more = [tt && link("tz-tt", tt, ICON.tt, "TikTok"), site.facebook && link("tz-fb", site.facebook, ICON.fb, "Facebook")].filter(Boolean);
   box.innerHTML = `
     <div class="tz-snow" aria-hidden="true">${Array.from({ length: 36 }, (_, i) => `<i style="left:${(i * 37) % 100}%;animation-delay:${-((i * 1.7) % 12).toFixed(1)}s;animation-duration:${8 + (i % 6)}s;font-size:${10 + (i % 4) * 5}px">${i % 3 ? "❄" : "•"}</i>`).join("")}</div>
