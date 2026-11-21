@@ -407,7 +407,7 @@ function settingsHtml() {
          ["wWa", "whatsapp", "WhatsApp (10 dígitos)", "5512345678"], ["wTel", "phone", "Teléfono", "55 1234 5678"],
          ["wIg", "instagram", "Instagram (enlace)", "https://instagram.com/tacosjosue"], ["wFb", "facebook", "Facebook (enlace)", "https://facebook.com/…"],
          ["wTt", "tiktok", "TikTok (enlace)", "https://tiktok.com/@…"], ["wSp", "spotify", "Playlist de Spotify (enlace)", "https://open.spotify.com/playlist/…"],
-         ["wSlogan", "slogan", "Frase taquera (aviso «Muy pronto»)", "Navidad sin tacos… no es Navidad 🎄🌮"]]
+         ["wSlogan", "slogan", "Frase taquera (aviso «Muy pronto»)", "Navidad sin tacos… no es Navidad"]]
         .map(([id, k, l, ph]) => `<label>${l}<input id="${id}" maxlength="300" placeholder="${esc(ph)}" value="${esc((c.site || {})[k] || "")}"></label>`).join("")}
       </div></fieldset>
     <label>Fondo de caja (efectivo con el que abres)<input id="sFloat" type="number" min="0" step="1" value="${esc(c.cashFloat ?? "")}" placeholder="Ej. 500"></label>

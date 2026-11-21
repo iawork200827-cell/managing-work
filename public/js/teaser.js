@@ -14,7 +14,7 @@ const ICON = {
 };
 const DEFAULT_IG = "https://www.instagram.com/tacos.josue/";
 const DEFAULT_TT = "https://www.tiktok.com/@tacos.josue";
-const DEFAULT_QUOTE = "Navidad sin tacos… no es Navidad 🎄🌮";
+const DEFAULT_QUOTE = "Navidad sin tacos… no es Navidad";
 
 const link = (cls, href, icon, label) => `<a class="tz-btn ${cls}" href="${esc(href)}" target="_blank" rel="noopener">${icon}<span>${label}</span></a>`;
 
@@ -54,19 +54,19 @@ function render(site = {}) {
         <path class="tz-spark" d="M26 44 l4 10 l10 4 l-10 4 l-4 10 l-4 -10 l-10 -4 l10 -4z" fill="#ffd257"/>
         <path class="tz-spark" style="animation-delay:.8s" d="M198 116 l3 7 l7 3 l-7 3 l-3 7 l-3 -7 l-7 -3 l7 -3z" fill="#ffd257"/>
       </svg></div>
-      <span class="tz-eyebrow">🎄 Esta Navidad algo grande se está cocinando…</span>
+      <span class="tz-eyebrow">Esta Navidad algo grande se está cocinando…</span>
       <h1 class="tz-title">Muy pronto<span>un regalo para ti</span></h1>
-      <p class="tz-sub">Santa nos pidió algo especial y lo estamos envolviendo con salsa y cebollita: una nueva forma de pedir tus tacos. Calientito, rápido y con todo. 🤫</p>
-      <div class="tz-hints" aria-label="Pistas"><span>📱 ¿Desde tu cel?</span><span>⏱️ ¿Sin filas?</span><span>🎁 ¿Regalos?</span></div>
-      <div class="tz-load"><span>Envolviendo el regalo… 🎁</span><div class="tz-bar"><i></i></div></div>
+      <p class="tz-sub">Santa nos pidió algo especial y lo estamos envolviendo con salsa y cebollita: una nueva forma de pedir tus tacos. Calientito, rápido y con todo.</p>
+      <div class="tz-hints" aria-label="Pistas"><span>¿Desde tu cel?</span><span>¿Sin filas?</span><span>¿Regalos?</span></div>
+      <div class="tz-load"><span>Envolviendo el regalo…</span><div class="tz-bar"><i></i></div></div>
       <section class="tz-card">
-        <h2>Mientras tanto, síguenos 👇</h2>
+        <h2>Mientras tanto, síguenos</h2>
         <p>En Instagram te enteras primero de <strong>ofertas, descuentos y promociones navideñas</strong> antes que nadie.</p>
         ${link("tz-ig", ig, ICON.ig, "Seguir en Instagram")}
       </section>
       ${more.length ? `<section class="tz-card"><h2>Más contenido</h2><p>Detrás del trompo, retos y antojos navideños.</p>
         <div class="tz-row ${more.length === 1 ? "one" : ""}">${more.join("")}</div></section>` : ""}
-      ${site.spotify ? `<section class="tz-card"><h2>🎧 La playlist de la taquería</h2><p>El soundtrack perfecto para tus tacos de temporada 🎄</p>
+      ${site.spotify ? `<section class="tz-card"><h2>La playlist de la taquería</h2><p>El soundtrack perfecto para tus tacos de temporada</p>
         ${link("tz-sp", site.spotify, ICON.sp, "Escuchar en Spotify")}</section>` : ""}
       <p class="tz-quote">${esc(site.slogan || DEFAULT_QUOTE)}</p>
       <p class="tz-small">tacosjosue.mx</p>
